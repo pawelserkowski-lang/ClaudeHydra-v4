@@ -10,6 +10,7 @@ pub struct WitcherAgent {
     pub tier: String,
     pub status: String,
     pub description: String,
+    pub model: String,
 }
 
 // ── Health ──────────────────────────────────────────────────────────────
@@ -20,7 +21,6 @@ pub struct HealthResponse {
     pub version: String,
     pub app: String,
     pub uptime_seconds: u64,
-    pub ollama_connected: bool,
     pub providers: Vec<ProviderInfo>,
 }
 
@@ -66,26 +66,15 @@ pub struct UsageInfo {
     pub total_tokens: u32,
 }
 
-// ── Ollama ──────────────────────────────────────────────────────────────
+// ── Claude Models ───────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OllamaModel {
+pub struct ClaudeModelInfo {
+    pub id: String,
     pub name: String,
-    #[serde(default)]
-    pub size: u64,
-    #[serde(default)]
-    pub modified_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OllamaModelsResponse {
-    pub models: Vec<OllamaModel>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OllamaHealthResponse {
-    pub connected: bool,
-    pub version: Option<String>,
+    pub tier: String,
+    pub provider: String,
+    pub available: bool,
 }
 
 // ── Settings ────────────────────────────────────────────────────────────
@@ -94,7 +83,6 @@ pub struct OllamaHealthResponse {
 pub struct AppSettings {
     pub theme: String,
     pub language: String,
-    pub ollama_host: String,
     pub default_model: String,
     pub auto_start: bool,
 }

@@ -1,10 +1,9 @@
 /**
- * OllamaChatView — Full chat interface for Ollama + Claude API.
+ * ClaudeChatView — Full chat interface for Claude API with NDJSON streaming.
  *
- * Ported from ClaudeHydra v3 `web/src/components/OllamaChatView.tsx`.
- * ClaudeHydra-v4: Decomposed into ChatInput + MessageBubble sub-components,
- * uses ModelSelector molecule, motion animations, NDJSON streaming (placeholder),
- * and green Matrix theme throughout.
+ * Replaces OllamaChatView. Uses static Claude model list,
+ * streams via /api/claude/chat/stream (NDJSON protocol),
+ * and sends a hidden system message to each agent.
  */
 
 import { Bot, Trash2 } from 'lucide-react';
@@ -20,10 +19,12 @@ import { type ChatMessage, MessageBubble } from './MessageBubble';
 // Types
 // ---------------------------------------------------------------------------
 
-interface OllamaModel {
+interface ClaudeModel {
+  id: string;
   name: string;
-  modified_at?: string;
-  size?: number;
+  tier: string;
+  provider: string;
+  available: boolean;
 }
 
 interface StreamChunk {
@@ -35,39 +36,67 @@ interface StreamChunk {
 }
 
 // ---------------------------------------------------------------------------
-// API helpers (placeholder — to be wired to real API layer)
+// Static Claude models
 // ---------------------------------------------------------------------------
 
-const OLLAMA_PROXY = '/api/ollama';
+const CLAUDE_MODELS: ClaudeModel[] = [
+  { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', tier: 'Commander', provider: 'anthropic', available: true },
+  { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5', tier: 'Coordinator', provider: 'anthropic', available: true },
+  { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', tier: 'Executor', provider: 'anthropic', available: true },
+];
 
-async function ollamaHealthCheck(): Promise<boolean> {
+const DEFAULT_MODEL = 'claude-sonnet-4-5-20250929';
+
+// ---------------------------------------------------------------------------
+// System prompt (sent as hidden context, not shown in chat)
+// ---------------------------------------------------------------------------
+
+const SYSTEM_PROMPT = [
+  'You are a Witcher-themed AI agent in the ClaudeHydra v4 Swarm Control Center.',
+  'The swarm consists of 12 agents organized in 3 tiers:',
+  '- Commander (Geralt, Yennefer, Vesemir) → Claude Opus 4.6',
+  '- Coordinator (Triss, Jaskier, Ciri, Dijkstra) → Claude Sonnet 4.5',
+  '- Executor (Lambert, Eskel, Regis, Zoltan, Philippa) → Claude Haiku 4.5',
+  '',
+  'You assist the user with software engineering tasks.',
+  'Respond concisely and helpfully. Use markdown formatting when appropriate.',
+].join('\n');
+
+// ---------------------------------------------------------------------------
+// API helpers
+// ---------------------------------------------------------------------------
+
+async function claudeHealthCheck(): Promise<boolean> {
   try {
-    const res = await fetch(`${OLLAMA_PROXY}/api/tags`);
-    return res.ok;
+    const res = await fetch('/api/health');
+    if (!res.ok) return false;
+    const data = await res.json();
+    const anthropic = data.providers?.find((p: { name: string; available: boolean }) => p.name === 'anthropic');
+    return anthropic?.available ?? false;
   } catch {
     return false;
   }
 }
 
-async function ollamaListModels(): Promise<OllamaModel[]> {
-  const res = await fetch(`${OLLAMA_PROXY}/api/tags`);
-  if (!res.ok) throw new Error('Failed to fetch models');
-  const data: { models?: OllamaModel[] } = await res.json();
-  return data.models ?? [];
-}
-
 /**
- * NDJSON streaming chat — reads newline-delimited JSON from Ollama.
- * Each line is a JSON object with `message.content` and `done` fields.
+ * NDJSON streaming chat — reads newline-delimited JSON from backend.
+ * Backend translates Anthropic SSE into NDJSON:
+ * {"token":"text","done":false}
+ * {"token":"","done":true,"model":"...","total_tokens":42}
  */
-async function* ollamaStreamChat(
+async function* claudeStreamChat(
   model: string,
   messages: Array<{ role: string; content: string }>,
 ): AsyncGenerator<StreamChunk> {
-  const res = await fetch(`${OLLAMA_PROXY}/api/chat`, {
+  const res = await fetch('/api/claude/chat/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, messages, stream: true }),
+    body: JSON.stringify({
+      model,
+      messages,
+      max_tokens: 4096,
+      stream: true,
+    }),
   });
 
   if (!res.ok) {
@@ -94,14 +123,14 @@ async function* ollamaStreamChat(
     for (const line of lines) {
       if (!line.trim()) continue;
       try {
-        const chunk: { message?: { content?: string }; done?: boolean; model?: string; eval_count?: number } =
+        const chunk: { token?: string; done?: boolean; model?: string; total_tokens?: number } =
           JSON.parse(line);
         yield {
           id: crypto.randomUUID(),
-          token: chunk.message?.content ?? '',
+          token: chunk.token ?? '',
           done: chunk.done ?? false,
           model: chunk.model,
-          total_tokens: chunk.eval_count,
+          total_tokens: chunk.total_tokens,
         };
       } catch {
         // Ignore NDJSON parse errors on partial lines
@@ -114,13 +143,13 @@ async function* ollamaStreamChat(
 // Model option adapter
 // ---------------------------------------------------------------------------
 
-function toModelOption(m: OllamaModel): ModelOption {
+function toModelOption(m: ClaudeModel): ModelOption {
   return {
-    id: m.name,
+    id: m.id,
     name: m.name,
-    provider: 'ollama',
-    available: true,
-    description: m.size ? `${(m.size / 1_073_741_824).toFixed(1)} GB` : undefined,
+    provider: m.provider,
+    available: m.available,
+    description: m.tier,
   };
 }
 
@@ -148,14 +177,13 @@ function EmptyChatState() {
 }
 
 // ---------------------------------------------------------------------------
-// OllamaChatView component
+// ClaudeChatView component
 // ---------------------------------------------------------------------------
 
-export function OllamaChatView() {
+export function ClaudeChatView() {
   // Model state
-  const [models, setModels] = useState<OllamaModel[]>([]);
-  const [selectedModel, setSelectedModel] = useState<string>('');
-  const [ollamaConnected, setOllamaConnected] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_MODEL);
+  const [claudeConnected, setClaudeConnected] = useState(false);
 
   // Chat state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -166,44 +194,27 @@ export function OllamaChatView() {
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const responseBufferRef = useRef<string>('');
 
-  // ----- Load models on mount -------------------------------------------
+  // ----- Check Claude API connectivity on mount ----------------------------
 
   useEffect(() => {
-    const loadModels = async () => {
+    const checkHealth = async () => {
       try {
-        const healthy = await ollamaHealthCheck();
-        setOllamaConnected(healthy);
-        if (healthy) {
-          const result = await ollamaListModels();
-          if (result.length > 0) {
-            setModels(result);
-          }
-        }
-      } catch (err) {
-        console.error('Failed to load models:', err);
-        setOllamaConnected(false);
+        const connected = await claudeHealthCheck();
+        setClaudeConnected(connected);
+      } catch {
+        setClaudeConnected(false);
       }
     };
-    void loadModels();
+    void checkHealth();
   }, []);
 
-  // Auto-select first model
-  useEffect(() => {
-    if (selectedModel || models.length === 0) return;
-    const first = models[0];
-    if (first) {
-      setSelectedModel(first.name);
-    }
-  }, [models, selectedModel]);
-
-  // ----- Auto-scroll ----------------------------------------------------
-  // We intentionally depend on `messages` to scroll on every change.
+  // ----- Auto-scroll -------------------------------------------------------
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll must fire on every message update
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // ----- Paste handler (global) -----------------------------------------
+  // ----- Paste handler (global) --------------------------------------------
 
   useEffect(() => {
     const handlePaste = async (e: ClipboardEvent) => {
@@ -212,7 +223,6 @@ export function OllamaChatView() {
       for (const item of Array.from(items)) {
         if (item.kind === 'file') {
           e.preventDefault();
-          // File paste is handled by ChatInput
         }
       }
     };
@@ -220,22 +230,22 @@ export function OllamaChatView() {
     return () => window.removeEventListener('paste', handlePaste);
   }, []);
 
-  // ----- Model selection adapter ----------------------------------------
+  // ----- Model selection adapter -------------------------------------------
 
-  const modelOptions = models.map(toModelOption);
+  const modelOptions = CLAUDE_MODELS.map(toModelOption);
 
   const handleModelSelect = useCallback((model: ModelOption) => {
     setSelectedModel(model.id);
   }, []);
 
-  // ----- Clear chat -----------------------------------------------------
+  // ----- Clear chat --------------------------------------------------------
 
   const clearChat = useCallback(() => {
     setMessages([]);
     setIsLoading(false);
   }, []);
 
-  // ----- Send message with streaming ------------------------------------
+  // ----- Send message with streaming ---------------------------------------
 
   const handleSend = useCallback(
     async (text: string, attachments: Attachment[]) => {
@@ -278,16 +288,19 @@ export function OllamaChatView() {
       setMessages((prev) => [...prev, assistantMessage]);
 
       try {
-        // Build history for context
-        const chatHistory = messages.map((m) => ({
-          role: m.role,
-          content: m.content,
-        }));
+        // Build history for context — include system prompt as first message
+        const chatHistory: Array<{ role: string; content: string }> = [
+          { role: 'user', content: SYSTEM_PROMPT },
+          { role: 'assistant', content: 'Understood. I am ready to assist as a Witcher agent in the ClaudeHydra swarm.' },
+        ];
+        for (const m of messages) {
+          chatHistory.push({ role: m.role, content: m.content });
+        }
         chatHistory.push({ role: 'user', content });
 
         responseBufferRef.current = '';
 
-        for await (const chunk of ollamaStreamChat(selectedModel, chatHistory)) {
+        for await (const chunk of claudeStreamChat(selectedModel, chatHistory)) {
           responseBufferRef.current += chunk.token;
 
           setMessages((prev) => {
@@ -332,7 +345,7 @@ export function OllamaChatView() {
     [selectedModel, isLoading, messages],
   );
 
-  // ----- Render ----------------------------------------------------------
+  // ----- Render -------------------------------------------------------------
 
   return (
     <div data-testid="chat-view" className="h-full flex flex-col p-4">
@@ -347,11 +360,11 @@ export function OllamaChatView() {
         <div className="flex items-center gap-3">
           <Bot className="text-[var(--matrix-accent)]" size={24} />
           <div>
-            <h2 className="text-lg font-semibold text-[var(--matrix-accent)] font-mono">Ollama Chat</h2>
+            <h2 className="text-lg font-semibold text-[var(--matrix-accent)] font-mono">Claude Chat</h2>
             <p data-testid="chat-status-text" className="text-xs text-[var(--matrix-text-secondary)]">
-              {ollamaConnected
-                ? `${models.length} model${models.length === 1 ? '' : 's'} available`
-                : 'Offline — start Ollama to connect'}
+              {claudeConnected
+                ? `${CLAUDE_MODELS.length} models available`
+                : 'Offline — configure API key in Settings'}
             </p>
           </div>
         </div>
@@ -362,7 +375,7 @@ export function OllamaChatView() {
             models={modelOptions}
             selectedId={selectedModel || null}
             onSelect={handleModelSelect}
-            disabled={!ollamaConnected || models.length === 0}
+            disabled={!claudeConnected}
             placeholder="Select model"
             className="w-56"
           />
@@ -386,7 +399,7 @@ export function OllamaChatView() {
       <div
         ref={chatContainerRef}
         data-testid="chat-message-area"
-        className={cn('flex-1 glass-panel p-4 overflow-y-auto relative transition-all rounded-lg', 'scrollbar-thin')}
+        className={cn('flex-1 p-4 overflow-y-auto relative transition-all rounded-lg', 'scrollbar-thin')}
       >
         {messages.length === 0 ? (
           <EmptyChatState />
@@ -416,13 +429,13 @@ export function OllamaChatView() {
       <div className="mt-3">
         <ChatInput
           onSend={handleSend}
-          disabled={!ollamaConnected || !selectedModel}
+          disabled={!claudeConnected || !selectedModel}
           isLoading={isLoading}
-          placeholder={ollamaConnected ? 'Type a message... (Shift+Enter = new line)' : 'Ollama is offline'}
+          placeholder={claudeConnected ? 'Type a message... (Shift+Enter = new line)' : 'Configure API key in Settings'}
         />
       </div>
     </div>
   );
 }
 
-export default OllamaChatView;
+export default ClaudeChatView;

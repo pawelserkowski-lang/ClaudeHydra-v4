@@ -4,10 +4,8 @@ import {
   systemStatsSchema,
   agentSchema,
   agentsListSchema,
-  ollamaHealthSchema,
-  ollamaModelSchema,
-  ollamaModelsSchema,
-  ollamaChatResponseSchema,
+  claudeModelSchema,
+  claudeModelsSchema,
   claudeChatResponseSchema,
   usageSchema,
   settingsSchema,
@@ -25,8 +23,10 @@ describe('healthSchema', () => {
       status: 'healthy',
       version: '4.0.1',
       uptime_seconds: 3600,
-      ollama_connected: true,
-      providers: ['ollama', 'claude'],
+      providers: [
+        { name: 'anthropic', available: true },
+        { name: 'google', available: false },
+      ],
     };
     expect(healthSchema.parse(data)).toEqual(data);
   });
@@ -78,10 +78,16 @@ describe('agentSchema', () => {
     tier: 'premium',
     status: 'active',
     description: 'Researches topics on the web',
+    model: 'claude-sonnet-4-5-20250929',
   };
 
   it('parses valid agent', () => {
     expect(agentSchema.parse(validAgent)).toEqual(validAgent);
+  });
+
+  it('parses agent without optional model', () => {
+    const { model, ...noModel } = validAgent;
+    expect(agentSchema.parse(noModel)).toEqual(noModel);
   });
 
   it('rejects agent missing required fields', () => {
@@ -102,79 +108,36 @@ describe('agentsListSchema', () => {
 });
 
 // ===========================================================================
-// Ollama Health
+// Claude Model
 // ===========================================================================
-describe('ollamaHealthSchema', () => {
-  it('parses valid ollama health', () => {
-    const data = { status: 'connected', models_available: 5 };
-    expect(ollamaHealthSchema.parse(data)).toEqual(data);
-  });
-
-  it('rejects missing models_available', () => {
-    const result = ollamaHealthSchema.safeParse({ status: 'connected' });
-    expect(result.success).toBe(false);
-  });
-});
-
-// ===========================================================================
-// Ollama Model
-// ===========================================================================
-describe('ollamaModelSchema', () => {
+describe('claudeModelSchema', () => {
   const validModel = {
-    name: 'llama3:8b',
-    size: 4_700_000_000,
-    modified_at: '2025-01-15T10:00:00Z',
-    digest: 'sha256:abc123',
+    id: 'claude-sonnet-4-5-20250929',
+    name: 'Claude Sonnet 4.5',
+    tier: 'Coordinator',
+    provider: 'anthropic',
+    available: true,
   };
 
-  it('parses valid model', () => {
-    expect(ollamaModelSchema.parse(validModel)).toEqual(validModel);
+  it('parses valid Claude model', () => {
+    expect(claudeModelSchema.parse(validModel)).toEqual(validModel);
   });
 
-  it('rejects model with missing digest', () => {
-    const { digest, ...incomplete } = validModel;
-    const result = ollamaModelSchema.safeParse(incomplete);
+  it('rejects model with missing provider', () => {
+    const { provider, ...incomplete } = validModel;
+    const result = claudeModelSchema.safeParse(incomplete);
     expect(result.success).toBe(false);
   });
 });
 
-describe('ollamaModelsSchema', () => {
-  it('parses models wrapper with array', () => {
-    const data = {
-      models: [
-        { name: 'llama3:8b', size: 4_700_000_000, modified_at: '2025-01-15T10:00:00Z', digest: 'abc' },
-      ],
-    };
-    expect(ollamaModelsSchema.parse(data)).toEqual(data);
-  });
-
-  it('rejects when models is not an array', () => {
-    const result = ollamaModelsSchema.safeParse({ models: 'not-array' });
-    expect(result.success).toBe(false);
-  });
-});
-
-// ===========================================================================
-// Ollama Chat Response
-// ===========================================================================
-describe('ollamaChatResponseSchema', () => {
-  it('parses valid response', () => {
-    const data = {
-      message: { role: 'assistant', content: 'Hello!' },
-      model: 'llama3:8b',
-      total_duration: 1234567890,
-      eval_count: 42,
-    };
-    expect(ollamaChatResponseSchema.parse(data)).toEqual(data);
-  });
-
-  it('rejects response without message', () => {
-    const result = ollamaChatResponseSchema.safeParse({
-      model: 'llama3:8b',
-      total_duration: 123,
-      eval_count: 1,
-    });
-    expect(result.success).toBe(false);
+describe('claudeModelsSchema', () => {
+  it('parses array of Claude models', () => {
+    const models = [
+      { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', tier: 'Commander', provider: 'anthropic', available: true },
+      { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5', tier: 'Coordinator', provider: 'anthropic', available: true },
+      { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', tier: 'Executor', provider: 'anthropic', available: true },
+    ];
+    expect(claudeModelsSchema.parse(models)).toHaveLength(3);
   });
 });
 
@@ -226,7 +189,6 @@ describe('settingsSchema', () => {
     max_tokens: 4096,
     language: 'en',
     theme: 'matrix-green',
-    ollama_host: 'http://localhost:11434',
   };
 
   it('parses valid settings', () => {

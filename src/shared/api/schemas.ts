@@ -9,12 +9,18 @@ import { z } from 'zod';
 // Health
 // ---------------------------------------------------------------------------
 
+export const providerInfoSchema = z.object({
+  name: z.string(),
+  available: z.boolean(),
+});
+
+export type ProviderInfo = z.infer<typeof providerInfoSchema>;
+
 export const healthSchema = z.object({
   status: z.string(),
   version: z.string(),
   uptime_seconds: z.number(),
-  ollama_connected: z.boolean(),
-  providers: z.array(z.string()),
+  providers: z.array(providerInfoSchema),
 });
 
 export type Health = z.infer<typeof healthSchema>;
@@ -46,6 +52,7 @@ export const agentSchema = z.object({
   tier: z.string(),
   status: z.string(),
   description: z.string(),
+  model: z.string().optional(),
 });
 
 export type Agent = z.infer<typeof agentSchema>;
@@ -55,63 +62,22 @@ export const agentsListSchema = z.array(agentSchema);
 export type AgentsList = z.infer<typeof agentsListSchema>;
 
 // ---------------------------------------------------------------------------
-// Ollama Health
+// Claude Models
 // ---------------------------------------------------------------------------
 
-export const ollamaHealthSchema = z.object({
-  status: z.string(),
-  models_available: z.number(),
-});
-
-export type OllamaHealth = z.infer<typeof ollamaHealthSchema>;
-
-// ---------------------------------------------------------------------------
-// Ollama Models
-// ---------------------------------------------------------------------------
-
-export const ollamaModelSchema = z.object({
+export const claudeModelSchema = z.object({
+  id: z.string(),
   name: z.string(),
-  size: z.number(),
-  modified_at: z.string(),
-  digest: z.string(),
+  tier: z.string(),
+  provider: z.string(),
+  available: z.boolean(),
 });
 
-export type OllamaModel = z.infer<typeof ollamaModelSchema>;
+export type ClaudeModel = z.infer<typeof claudeModelSchema>;
 
-export const ollamaModelsSchema = z.object({
-  models: z.array(ollamaModelSchema),
-});
+export const claudeModelsSchema = z.array(claudeModelSchema);
 
-export type OllamaModels = z.infer<typeof ollamaModelsSchema>;
-
-// ---------------------------------------------------------------------------
-// Ollama Chat
-// ---------------------------------------------------------------------------
-
-export const ollamaChatRequestSchema = z.object({
-  model: z.string(),
-  messages: z.array(
-    z.object({
-      role: z.string(),
-      content: z.string(),
-    }),
-  ),
-  temperature: z.number().optional(),
-});
-
-export type OllamaChatRequest = z.infer<typeof ollamaChatRequestSchema>;
-
-export const ollamaChatResponseSchema = z.object({
-  message: z.object({
-    role: z.string(),
-    content: z.string(),
-  }),
-  model: z.string(),
-  total_duration: z.number(),
-  eval_count: z.number(),
-});
-
-export type OllamaChatResponse = z.infer<typeof ollamaChatResponseSchema>;
+export type ClaudeModels = z.infer<typeof claudeModelsSchema>;
 
 // ---------------------------------------------------------------------------
 // Claude Chat
@@ -135,6 +101,7 @@ export const claudeChatRequestSchema = z.object({
   max_tokens: z.number().optional(),
   temperature: z.number().optional(),
   system: z.string().optional(),
+  stream: z.boolean().optional(),
 });
 
 export type ClaudeChatRequest = z.infer<typeof claudeChatRequestSchema>;
@@ -157,7 +124,6 @@ export const settingsSchema = z.object({
   max_tokens: z.number(),
   language: z.string(),
   theme: z.string(),
-  ollama_host: z.string(),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;

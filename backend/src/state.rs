@@ -18,9 +18,6 @@ pub struct AppState {
 
 impl AppState {
     pub fn new() -> Self {
-        let ollama_host = std::env::var("OLLAMA_HOST")
-            .unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
-
         let mut api_keys = HashMap::new();
         if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
             api_keys.insert("ANTHROPIC_API_KEY".to_string(), key);
@@ -32,8 +29,7 @@ impl AppState {
         let settings = AppSettings {
             theme: "dark".to_string(),
             language: "en".to_string(),
-            ollama_host,
-            default_model: "llama3.1".to_string(),
+            default_model: "claude-sonnet-4-5-20250929".to_string(),
             auto_start: false,
         };
 
@@ -48,6 +44,15 @@ impl AppState {
             start_time: Instant::now(),
             client: reqwest::Client::new(),
         }
+    }
+}
+
+fn model_for_tier(tier: &str) -> &'static str {
+    match tier {
+        "Commander" => "claude-opus-4-6",
+        "Coordinator" => "claude-sonnet-4-5-20250929",
+        "Executor" => "claude-haiku-4-5-20251001",
+        _ => "claude-sonnet-4-5-20250929",
     }
 }
 
@@ -76,6 +81,7 @@ fn init_witcher_agents() -> Vec<WitcherAgent> {
             tier: tier.to_string(),
             status: "active".to_string(),
             description: desc.to_string(),
+            model: model_for_tier(tier).to_string(),
         })
         .collect()
 }

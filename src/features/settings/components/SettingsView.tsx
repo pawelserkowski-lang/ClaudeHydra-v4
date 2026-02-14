@@ -23,7 +23,6 @@ import {
   Play,
   Plug,
   Save,
-  Server,
   Settings,
   Sparkles,
   Sun,
@@ -42,7 +41,7 @@ import { cn } from '@/shared/utils/cn';
 // Types
 // ---------------------------------------------------------------------------
 
-type ProviderId = 'claude' | 'openai' | 'gemini' | 'groq' | 'mistral' | 'ollama' | 'openrouter' | 'together';
+type ProviderId = 'claude' | 'openai' | 'gemini' | 'groq' | 'mistral' | 'openrouter' | 'together';
 
 type ThemeMode = 'dark' | 'light' | 'system';
 
@@ -120,15 +119,6 @@ const PROVIDERS: readonly ProviderConfig[] = [
     description: 'Mistral Large and Codestral models.',
   },
   {
-    id: 'ollama',
-    name: 'Ollama (Local)',
-    icon: Server,
-    iconColor: 'text-green-400',
-    keyPlaceholder: '(not required)',
-    endpointPlaceholder: 'http://127.0.0.1:11434',
-    description: 'Local AI inference server. No API key needed.',
-  },
-  {
     id: 'openrouter',
     name: 'OpenRouter',
     icon: Globe,
@@ -153,12 +143,9 @@ const PROVIDERS: readonly ProviderConfig[] = [
 // ---------------------------------------------------------------------------
 
 const DEFAULT_MODEL_OPTIONS: readonly ModelOption[] = [
-  { id: 'claude-opus-4', name: 'Claude Opus 4', provider: 'anthropic', available: true },
-  { id: 'claude-sonnet-4', name: 'Claude Sonnet 4', provider: 'anthropic', available: true },
-  { id: 'gpt-4o', name: 'GPT-4o', provider: 'openai', available: true },
-  { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'google', available: true },
-  { id: 'llama-3.3-70b', name: 'Llama 3.3 70B', provider: 'groq', available: true },
-  { id: 'mistral-large', name: 'Mistral Large', provider: 'mistral', available: true },
+  { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', provider: 'anthropic', available: true, description: 'Commander tier' },
+  { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5', provider: 'anthropic', available: true, description: 'Coordinator tier' },
+  { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', provider: 'anthropic', available: true, description: 'Executor tier' },
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -311,7 +298,7 @@ function ApiKeyField({ provider, state, onKeyChange, onEndpointChange, onTestCon
         isLoading={state.testing}
         loadingText="Testing..."
         leftIcon={state.testing ? undefined : <Plug size={12} />}
-        disabled={!hasKey && provider.id !== 'ollama'}
+        disabled={!hasKey}
       >
         Test Connection
       </Button>
@@ -349,7 +336,7 @@ function ThemeSelector({ currentMode, onModeChange }: ThemeSelectorProps) {
             className={cn(
               'flex flex-col items-center gap-2 p-4 rounded-lg border transition-all text-center',
               isActive
-                ? 'border-[var(--matrix-accent)] bg-[var(--matrix-accent)]/10 shadow-[0_0_15px_rgba(0,255,65,0.1)]'
+                ? 'border-[var(--matrix-accent)] bg-[var(--matrix-accent)]/10 shadow-[0_0_15px_rgba(255,255,255,0.1)]'
                 : 'border-[var(--matrix-border)] bg-[var(--matrix-bg-secondary)]/30 hover:border-[var(--matrix-accent-dim)]',
             )}
             whileHover={{ scale: 1.02 }}
@@ -424,7 +411,7 @@ export function SettingsView() {
     }));
   }, []);
 
-  const handleTestConnection = useCallback((providerId: ProviderId) => {
+  const handleTestConnection = useCallback(async (providerId: ProviderId) => {
     setSettings((prev) => ({
       ...prev,
       providers: {
@@ -437,25 +424,47 @@ export function SettingsView() {
       },
     }));
 
-    // Placeholder -- simulate a test connection
-    setTimeout(() => {
-      setSettings((prev) => {
-        const provider = prev.providers[providerId];
-        const hasKey = provider.apiKey.length > 0 || providerId === 'ollama';
-        return {
-          ...prev,
-          providers: {
-            ...prev.providers,
-            [providerId]: {
-              ...provider,
-              testing: false,
-              testResult: hasKey ? 'success' : 'error',
-            },
-          },
-        };
-      });
-    }, 1500);
-  }, []);
+    let result: 'success' | 'error' = 'error';
+
+    try {
+      if (providerId === 'claude') {
+        // Save the API key to backend, then check health
+        const provider = settings.providers[providerId];
+        if (provider.apiKey.length > 0) {
+          await fetch('/api/settings/api-key', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider: 'ANTHROPIC_API_KEY', key: provider.apiKey }),
+          });
+          const healthRes = await fetch('/api/health');
+          if (healthRes.ok) {
+            const data = await healthRes.json();
+            const anthropic = data.providers?.find((p: { name: string; available: boolean }) => p.name === 'anthropic');
+            result = anthropic?.available ? 'success' : 'error';
+          }
+        }
+      } else {
+        // For other providers, simulate test
+        const provider = settings.providers[providerId];
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        result = provider.apiKey.length > 0 ? 'success' : 'error';
+      }
+    } catch {
+      result = 'error';
+    }
+
+    setSettings((prev) => ({
+      ...prev,
+      providers: {
+        ...prev.providers,
+        [providerId]: {
+          ...prev.providers[providerId],
+          testing: false,
+          testResult: result,
+        },
+      },
+    }));
+  }, [settings.providers]);
 
   // -- Model selection --
 
@@ -624,7 +633,7 @@ export function SettingsView() {
             <h3 data-testid="settings-about" className="text-sm font-semibold text-[var(--matrix-text-primary)] mb-2">About</h3>
             <div className="text-xs text-[var(--matrix-text-secondary)] space-y-1">
               <p>ClaudeHydra v4.0.0</p>
-              <p>AI Swarm Control Center -- Witcher Edition</p>
+              <p>AI Swarm Control Center -- Claude Edition</p>
               <p className="text-[var(--matrix-accent)]/60 font-mono">Phase 4 / Agent 7 -- Feature Views</p>
             </div>
           </Card>

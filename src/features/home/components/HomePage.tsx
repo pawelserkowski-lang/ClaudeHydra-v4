@@ -1,197 +1,311 @@
+// src/features/home/components/HomePage.tsx
 /**
- * HomePage — ClaudeHydra v4 landing / home view.
- * Ported from ClaudeHydra v3 `web/src/app/page.tsx`.
- *
- * Centered glass card with Zap icon, version badge, feature badges,
- * CTA buttons, and Matrix Green theme with motion entrance animations.
+ * ClaudeHydra v4 - WelcomeScreen (Home View)
+ * =============================================
+ * Centered hero card with logo, feature badges, CTA buttons, and recent sessions.
+ * Pixel-perfect port of GeminiHydra WelcomeScreen layout with ClaudeHydra data.
  */
 
-import { Bot, Brain, Cpu, MessageSquare, Network, Settings, Shield, Terminal, Users, Zap } from 'lucide-react';
-import { motion } from 'motion/react';
-import { Badge } from '@/components/atoms/Badge';
-import { Button } from '@/components/atoms/Button';
-import { useViewStore } from '@/stores/viewStore';
+import {
+  Bot,
+  Clock,
+  Layers,
+  MessageSquare,
+  Network,
+  Plus,
+  Settings,
+  Sparkles,
+  Users,
+} from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
+import { memo, useCallback, useMemo } from 'react';
 
-// ---------------------------------------------------------------------------
-// Feature badge data
-// ---------------------------------------------------------------------------
+import { Badge, Button } from '@/components/atoms';
+import { useViewTheme } from '@/shared/hooks/useViewTheme';
+import { cn } from '@/shared/utils/cn';
+import { type ChatSession, useViewStore } from '@/stores/viewStore';
 
-interface FeatureBadgeItem {
-  label: string;
-  icon: React.ReactNode;
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+const FEATURE_BADGES = [
+  { label: '12 Agents', icon: Users },
+  { label: 'Claude API', icon: Bot },
+  { label: 'MCP Integration', icon: Network },
+  { label: 'Streaming Chat', icon: MessageSquare },
+] as const;
+
+const MAX_RECENT_SESSIONS = 5;
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+function timeAgo(timestamp: number): string {
+  const diff = Date.now() - timestamp;
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return 'yesterday';
+  return `${days}d ago`;
 }
 
-const FEATURE_BADGES: FeatureBadgeItem[] = [
-  { label: '12 Agents', icon: <Users size={12} /> },
-  { label: 'Claude + Ollama', icon: <Bot size={12} /> },
-  { label: 'MCP Integration', icon: <Network size={12} /> },
-  { label: 'Streaming Chat', icon: <MessageSquare size={12} /> },
-  { label: 'Swarm AI', icon: <Brain size={12} /> },
-  { label: 'Local LLMs', icon: <Cpu size={12} /> },
-];
+// ============================================================================
+// ANIMATION VARIANTS
+// ============================================================================
 
-// ---------------------------------------------------------------------------
-// Feature card data
-// ---------------------------------------------------------------------------
-
-interface FeatureCardItem {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-}
-
-const FEATURE_CARDS: FeatureCardItem[] = [
-  {
-    icon: <Brain className="w-5 h-5" />,
-    title: 'Swarm AI',
-    description: '12 Witcher agents',
-  },
-  {
-    icon: <Terminal className="w-5 h-5" />,
-    title: 'Ollama',
-    description: 'Local LLM models',
-  },
-  {
-    icon: <Shield className="w-5 h-5" />,
-    title: 'MCP Bridge',
-    description: 'Claude integration',
-  },
-];
-
-// ---------------------------------------------------------------------------
-// Animation variants
-// ---------------------------------------------------------------------------
-
-const containerVariants = {
-  hidden: { opacity: 0 },
-  visible: {
-    opacity: 1,
-    transition: {
-      staggerChildren: 0.08,
-      delayChildren: 0.1,
-    },
-  },
-};
-
-const itemVariants = {
-  hidden: { opacity: 0, y: 20 },
+const heroVariants = {
+  hidden: { opacity: 0, y: 20, scale: 0.96 },
   visible: {
     opacity: 1,
     y: 0,
-    transition: { type: 'spring' as const, stiffness: 300, damping: 24 },
+    scale: 1,
+    transition: { duration: 0.6, ease: [0.22, 1, 0.36, 1] as const },
   },
 };
 
-const iconVariants = {
-  hidden: { opacity: 0, scale: 0.5, rotate: -20 },
+const ctaVariants = {
+  hidden: { opacity: 0, y: 12 },
   visible: {
     opacity: 1,
-    scale: 1,
-    rotate: 0,
-    transition: { type: 'spring' as const, stiffness: 400, damping: 20 },
+    y: 0,
+    transition: { duration: 0.4, delay: 0.2 },
   },
 };
 
-// ---------------------------------------------------------------------------
-// FeatureCard sub-component
-// ---------------------------------------------------------------------------
+const recentVariants = {
+  hidden: { opacity: 0, y: 8 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.4, delay: 0.3 },
+  },
+};
 
-function FeatureCard({ icon, title, description }: FeatureCardItem) {
-  return (
-    <motion.div
-      variants={itemVariants}
-      whileHover={{ y: -2, scale: 1.02 }}
-      className="glass-panel p-4 text-center space-y-2 cursor-default hover:border-[var(--matrix-accent-dim)] transition-colors"
-    >
-      <div className="text-[var(--matrix-accent)] flex justify-center">{icon}</div>
-      <h3 className="text-sm font-semibold text-[var(--matrix-text-primary)]">{title}</h3>
-      <p className="text-xs text-[var(--matrix-text-secondary)]">{description}</p>
-    </motion.div>
-  );
+const badgeContainerVariants = {
+  hidden: {},
+  visible: {
+    transition: { staggerChildren: 0.06, delayChildren: 0.15 },
+  },
+};
+
+const badgeItemVariants = {
+  hidden: { opacity: 0, scale: 0.85 },
+  visible: { opacity: 1, scale: 1 },
+};
+
+// ============================================================================
+// SESSION ROW SUB-COMPONENT
+// ============================================================================
+
+interface SessionRowProps {
+  session: ChatSession;
+  onOpen: (id: string) => void;
+  theme: ReturnType<typeof useViewTheme>;
 }
 
-// ---------------------------------------------------------------------------
-// HomePage component
-// ---------------------------------------------------------------------------
+const SessionRow = memo<SessionRowProps>(({ session, onOpen, theme }) => (
+  <motion.button
+    type="button"
+    onClick={() => onOpen(session.id)}
+    className={cn(
+      'w-full flex items-center gap-3 p-3 rounded-xl',
+      'transition-all duration-200 group cursor-pointer text-left',
+      theme.listItem,
+      theme.listItemHover,
+    )}
+    whileHover={{ x: 4 }}
+    whileTap={{ scale: 0.98 }}
+  >
+    <MessageSquare
+      size={16}
+      className={cn('flex-shrink-0 transition-colors', 'group-hover:text-[var(--matrix-accent)]', theme.iconMuted)}
+    />
+    <div className="flex-1 min-w-0">
+      <p className={cn('text-sm truncate transition-colors', 'group-hover:text-[var(--matrix-accent)]', theme.text)}>
+        {session.title}
+      </p>
+    </div>
+    <div className="flex flex-col items-end flex-shrink-0">
+      <span className={cn('text-[10px] font-mono', theme.textMuted)}>{timeAgo(session.createdAt)}</span>
+      {session.messageCount > 0 && (
+        <span className={cn('text-[10px] font-mono', theme.textMuted)}>{session.messageCount} msg</span>
+      )}
+    </div>
+  </motion.button>
+));
 
-export function HomePage() {
-  const { setView, createSession } = useViewStore();
+SessionRow.displayName = 'SessionRow';
 
-  const handleStartChat = () => {
+// ============================================================================
+// WELCOME SCREEN
+// ============================================================================
+
+export const HomePage = memo(() => {
+  const theme = useViewTheme();
+
+  const chatSessions = useViewStore((s) => s.chatSessions);
+  const setView = useViewStore((s) => s.setView);
+  const createSession = useViewStore((s) => s.createSession);
+  const setActiveSessionId = useViewStore((s) => s.setActiveSessionId);
+  const openTab = useViewStore((s) => s.openTab);
+
+  const recentSessions = useMemo(
+    () => [...chatSessions].sort((a, b) => b.createdAt - a.createdAt).slice(0, MAX_RECENT_SESSIONS),
+    [chatSessions],
+  );
+
+  const handleNewChat = useCallback(() => {
     createSession();
-  };
+  }, [createSession]);
 
-  const handleViewAgents = () => {
+  const handleOpenSession = useCallback(
+    (sessionId: string) => {
+      setActiveSessionId(sessionId);
+      openTab(sessionId);
+      setView('chat');
+    },
+    [setActiveSessionId, openTab, setView],
+  );
+
+  const handleViewAgents = useCallback(() => {
     setView('agents');
-  };
+  }, [setView]);
 
-  const handleSettings = () => {
+  const handleOpenSettings = useCallback(() => {
     setView('settings');
-  };
+  }, [setView]);
 
   return (
-    <div data-testid="home-view" className="flex flex-col items-center justify-center h-full bg-grid-pattern p-6 md:p-8 overflow-auto">
+    <div className="h-full flex flex-col items-center justify-center p-8 overflow-y-auto">
+      {/* ====== Hero Card ====== */}
       <motion.div
-        variants={containerVariants}
+        data-testid="welcome-hero"
+        className={cn('flex flex-col items-center gap-6 p-8 rounded-3xl max-w-lg w-full', theme.card)}
+        variants={heroVariants}
         initial="hidden"
         animate="visible"
-        data-testid="home-glass-card"
-        className="glass-card max-w-2xl w-full p-8 text-center space-y-6"
       >
-        {/* Logo + Title */}
-        <motion.div variants={itemVariants} className="flex items-center justify-center gap-3">
-          <motion.div
-            variants={iconVariants}
-            className="w-12 h-12 rounded-xl bg-[var(--matrix-accent)] flex items-center justify-center shadow-[0_0_20px_rgba(0,255,65,0.4)]"
-          >
-            <Zap className="w-7 h-7 text-[var(--matrix-bg-primary)]" />
-          </motion.div>
-          <h1 data-testid="home-title" className="text-3xl font-bold text-[var(--matrix-accent)] text-glow font-mono">ClaudeHydra</h1>
-        </motion.div>
+        {/* Logo with glow */}
+        <div className="relative">
+          <div
+            className="absolute inset-0 rounded-2xl blur-xl opacity-40"
+            style={{ background: 'var(--matrix-accent)' }}
+          />
+          <img
+            src={theme.isLight ? '/logolight.webp' : '/logodark.webp'}
+            alt="ClaudeHydra Logo"
+            className="relative w-56 h-56 object-contain drop-shadow-lg"
+          />
+        </div>
 
-        {/* Subtitle */}
-        <motion.p data-testid="home-subtitle" variants={itemVariants} className="text-[var(--matrix-text-secondary)] text-sm">
-          AI Swarm Control Center
-        </motion.p>
+        {/* Title */}
+        <div className="text-center">
+          <h1 className={cn('text-3xl font-bold font-mono tracking-tight', theme.title)}>ClaudeHydra</h1>
+          <p className={cn('text-sm mt-1.5 max-w-xs', theme.textMuted)}>
+            AI Swarm Control Center -- start a new chat or continue a previous conversation.
+          </p>
+        </div>
 
-        {/* Version badge */}
-        <motion.div data-testid="home-version-badge" variants={itemVariants}>
-          <Badge variant="accent" size="sm" icon={<Zap size={10} />}>
-            v4.0.0
-          </Badge>
-        </motion.div>
-
-        {/* Feature badges */}
-        <motion.div data-testid="home-feature-badges" variants={itemVariants} className="flex flex-wrap justify-center gap-2">
-          {FEATURE_BADGES.map((badge) => (
-            <Badge key={badge.label} variant="default" size="sm" icon={badge.icon}>
-              {badge.label}
-            </Badge>
+        {/* Feature Badges */}
+        <motion.div
+          className="flex flex-wrap justify-center gap-2"
+          variants={badgeContainerVariants}
+          initial="hidden"
+          animate="visible"
+        >
+          {FEATURE_BADGES.map(({ label, icon: Icon }) => (
+            <motion.div key={label} variants={badgeItemVariants}>
+              <Badge variant="accent" size="sm" icon={<Icon size={12} />}>
+                {label}
+              </Badge>
+            </motion.div>
           ))}
         </motion.div>
 
-        {/* Feature cards grid */}
-        <motion.div data-testid="home-feature-cards" variants={itemVariants} className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">
-          {FEATURE_CARDS.map((card) => (
-            <FeatureCard key={card.title} icon={card.icon} title={card.title} description={card.description} />
-          ))}
-        </motion.div>
-
-        {/* CTA buttons */}
-        <motion.div variants={itemVariants} className="flex flex-wrap justify-center gap-3 mt-6">
-          <Button data-testid="home-cta-start-chat" variant="primary" size="md" leftIcon={<MessageSquare size={16} />} onClick={handleStartChat}>
+        {/* CTA Buttons */}
+        <motion.div
+          className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full mt-2"
+          variants={ctaVariants}
+          initial="hidden"
+          animate="visible"
+        >
+          <Button variant="primary" size="md" leftIcon={<Plus size={16} />} onClick={handleNewChat} className="w-full" data-testid="btn-new-chat">
             Start Chat
           </Button>
-          <Button data-testid="home-cta-view-agents" variant="secondary" size="md" leftIcon={<Users size={16} />} onClick={handleViewAgents}>
+          <Button
+            variant="secondary"
+            size="md"
+            leftIcon={<Layers size={16} />}
+            onClick={handleViewAgents}
+            className="w-full"
+          >
             View Agents
           </Button>
-          <Button data-testid="home-cta-settings" variant="ghost" size="md" leftIcon={<Settings size={16} />} onClick={handleSettings}>
+          <Button
+            variant="ghost"
+            size="md"
+            leftIcon={<Settings size={16} />}
+            onClick={handleOpenSettings}
+            className="w-full"
+          >
             Settings
           </Button>
         </motion.div>
       </motion.div>
+
+      {/* ====== Recent Sessions ====== */}
+      <AnimatePresence>
+        {recentSessions.length > 0 && (
+          <motion.div
+            className="w-full max-w-lg mt-8"
+            variants={recentVariants}
+            initial="hidden"
+            animate="visible"
+            exit="hidden"
+          >
+            <div className="flex items-center gap-2 mb-3">
+              <Clock size={14} className={theme.iconMuted} />
+              <span className={cn('text-xs uppercase tracking-wider font-mono', theme.textMuted)}>Recent Chats</span>
+            </div>
+
+            <div className="space-y-2">
+              {recentSessions.map((session) => (
+                <SessionRow
+                  key={session.id}
+                  session={session}
+                  onOpen={handleOpenSession}
+                  theme={theme}
+                />
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ====== Empty State ====== */}
+      <AnimatePresence>
+        {recentSessions.length === 0 && (
+          <motion.div
+            className="flex flex-col items-center gap-3 mt-8 text-center"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ delay: 0.35 }}
+          >
+            <Sparkles size={32} className={cn(theme.iconMuted, 'opacity-40')} />
+            <p className={cn('text-sm', theme.textMuted)}>No chats yet. Start a new conversation!</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
-}
+});
+
+HomePage.displayName = 'HomePage';
 
 export default HomePage;

@@ -12,4 +12,4 @@ export type {
 } from './components/MessageBubble';
 
 export { MessageBubble } from './components/MessageBubble';
-export { OllamaChatView } from './components/OllamaChatView';
+export { ClaudeChatView } from './components/ClaudeChatView';

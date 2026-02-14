@@ -58,6 +58,8 @@ async fn health_has_correct_fields() {
     assert_eq!(json["app"], "ClaudeHydra");
     assert!(json["uptime_seconds"].is_u64());
     assert!(json["providers"].is_array());
+    // No ollama_connected field anymore
+    assert!(json.get("ollama_connected").is_none());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -117,6 +119,65 @@ async fn agents_have_required_fields() {
         assert!(agent["role"].is_string(), "agent missing role");
         assert!(agent["tier"].is_string(), "agent missing tier");
         assert!(agent["status"].is_string(), "agent missing status");
+        assert!(agent["model"].is_string(), "agent missing model");
+    }
+}
+
+#[tokio::test]
+async fn agents_have_correct_model_per_tier() {
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/agents")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let json = body_json(response).await;
+    let agents = json.as_array().unwrap();
+
+    for agent in agents {
+        let tier = agent["tier"].as_str().unwrap();
+        let model = agent["model"].as_str().unwrap();
+        match tier {
+            "Commander" => assert_eq!(model, "claude-opus-4-6"),
+            "Coordinator" => assert_eq!(model, "claude-sonnet-4-5-20250929"),
+            "Executor" => assert_eq!(model, "claude-haiku-4-5-20251001"),
+            _ => panic!("Unknown tier: {}", tier),
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  GET /api/claude/models
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn claude_models_returns_3() {
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/claude/models")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let json = body_json(response).await;
+    let models = json.as_array().unwrap();
+    assert_eq!(models.len(), 3);
+
+    for model in models {
+        assert!(model["id"].is_string());
+        assert!(model["name"].is_string());
+        assert!(model["tier"].is_string());
+        assert_eq!(model["provider"], "anthropic");
+        assert_eq!(model["available"], true);
     }
 }
 
@@ -154,8 +215,10 @@ async fn get_settings_default_values() {
     let json = body_json(response).await;
     assert_eq!(json["theme"], "dark");
     assert_eq!(json["language"], "en");
-    assert_eq!(json["default_model"], "llama3.1");
+    assert_eq!(json["default_model"], "claude-sonnet-4-5-20250929");
     assert_eq!(json["auto_start"], false);
+    // No ollama_host field anymore
+    assert!(json.get("ollama_host").is_none());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -167,8 +230,7 @@ async fn update_settings_returns_200() {
     let body = serde_json::json!({
         "theme": "light",
         "language": "pl",
-        "ollama_host": "http://localhost:11434",
-        "default_model": "mistral",
+        "default_model": "claude-opus-4-6",
         "auto_start": true
     });
 
@@ -189,7 +251,7 @@ async fn update_settings_returns_200() {
     let json = body_json(response).await;
     assert_eq!(json["theme"], "light");
     assert_eq!(json["language"], "pl");
-    assert_eq!(json["default_model"], "mistral");
+    assert_eq!(json["default_model"], "claude-opus-4-6");
     assert_eq!(json["auto_start"], true);
 }
 
@@ -201,8 +263,7 @@ async fn update_settings_persists() {
     let body = serde_json::json!({
         "theme": "light",
         "language": "de",
-        "ollama_host": "http://my-ollama:11434",
-        "default_model": "codellama",
+        "default_model": "claude-haiku-4-5-20251001",
         "auto_start": true
     });
 
@@ -220,7 +281,7 @@ async fn update_settings_persists() {
 
     let st = state.lock().unwrap();
     assert_eq!(st.settings.language, "de");
-    assert_eq!(st.settings.default_model, "codellama");
+    assert_eq!(st.settings.default_model, "claude-haiku-4-5-20251001");
     assert!(st.settings.auto_start);
 }
 

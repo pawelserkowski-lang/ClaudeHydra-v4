@@ -19,12 +19,13 @@ pub fn create_router(shared_state: Arc<Mutex<AppState>>) -> Router {
         .route("/api/system/stats", get(handlers::system_stats))
         // Agents
         .route("/api/agents", get(handlers::list_agents))
-        // Ollama proxy
-        .route("/api/ollama/health", get(handlers::ollama_health))
-        .route("/api/ollama/models", get(handlers::ollama_models))
-        .route("/api/ollama/chat", post(handlers::ollama_chat))
-        // Claude proxy
+        // Claude API
+        .route("/api/claude/models", get(handlers::claude_models))
         .route("/api/claude/chat", post(handlers::claude_chat))
+        .route(
+            "/api/claude/chat/stream",
+            post(handlers::claude_chat_stream),
+        )
         // Settings
         .route(
             "/api/settings",

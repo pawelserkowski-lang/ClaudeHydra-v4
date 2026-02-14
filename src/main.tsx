@@ -16,7 +16,7 @@ import './styles/globals.css';
 // ---------------------------------------------------------------------------
 
 const HomePage = lazy(() => import('@/features/home/components/HomePage'));
-const OllamaChatView = lazy(() => import('@/features/chat/components/OllamaChatView'));
+const ClaudeChatView = lazy(() => import('@/features/chat/components/ClaudeChatView'));
 const AgentsView = lazy(() => import('@/features/agents/components/AgentsView'));
 const HistoryView = lazy(() => import('@/features/history/components/HistoryView'));
 const SettingsView = lazy(() => import('@/features/settings/components/SettingsView'));
@@ -34,7 +34,7 @@ function ViewRouter() {
       case 'home':
         return <HomePage />;
       case 'chat':
-        return <OllamaChatView />;
+        return <ClaudeChatView />;
       case 'agents':
         return <AgentsView />;
       case 'history':

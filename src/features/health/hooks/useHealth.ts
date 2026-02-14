@@ -1,11 +1,11 @@
 /**
  * Health-related TanStack Query hooks.
- * Polls backend health, system stats, and Ollama connectivity.
+ * Polls backend health and system stats.
  */
 
 import { useQuery } from '@tanstack/react-query';
 import { apiGet } from '@/shared/api/client';
-import type { Health, OllamaHealth, SystemStats } from '@/shared/api/schemas';
+import type { Health, SystemStats } from '@/shared/api/schemas';
 
 /** GET /api/health — refetch every 30s */
 export function useHealthQuery() {
@@ -22,13 +22,5 @@ export function useSystemStatsQuery() {
     queryKey: ['system-stats'],
     queryFn: () => apiGet<SystemStats>('/api/system/stats'),
     refetchInterval: 10_000,
-  });
-}
-
-/** GET /api/ollama/health */
-export function useOllamaHealthQuery() {
-  return useQuery<OllamaHealth>({
-    queryKey: ['ollama-health'],
-    queryFn: () => apiGet<OllamaHealth>('/api/ollama/health'),
   });
 }
