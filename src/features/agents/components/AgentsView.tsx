@@ -1,12 +1,13 @@
 /**
- * AgentsView — 12 Witcher Agent Grid
- * ====================================
- * Displays all 12 Witcher-themed AI agents in a responsive grid layout.
+ * AgentsView — 12 Claude AI Agent Grid
+ * ======================================
+ * Displays all 12 Claude AI model agents in a responsive grid layout.
  * Each card shows: name, role, tier, status, description.
  * Filter by tier (Commander / Coordinator / Executor).
  *
- * Ported from ClaudeHydra v3 `web/src/app/agents/page.tsx` and expanded
- * with tier system, status indicators, and glass card styling.
+ * Commander tier = Claude Opus 4.6 (strategic, deep reasoning)
+ * Coordinator tier = Claude Sonnet 4.5 (balanced, versatile)
+ * Executor tier = Claude Haiku 4.5 (fast, efficient)
  */
 
 import { Bot, Brain, Crown, Filter, GitBranch, Shield, Swords, Users, Wand2, Zap } from 'lucide-react';
@@ -22,9 +23,10 @@ import { cn } from '@/shared/utils/cn';
 
 type AgentTier = 'Commander' | 'Coordinator' | 'Executor';
 
-interface WitcherAgent {
+interface ClaudeAgent {
   id: string;
   name: string;
+  model: string;
   role: string;
   tier: AgentTier;
   status: StatusState;
@@ -39,124 +41,136 @@ type TierFilter = AgentTier | 'All';
 // Agent Data
 // ---------------------------------------------------------------------------
 
-const WITCHER_AGENTS: readonly WitcherAgent[] = [
+const CLAUDE_AGENTS: readonly ClaudeAgent[] = [
   {
-    id: 'geralt',
-    name: 'Geralt',
+    id: 'opus-sentinel',
+    name: 'Opus Sentinel',
+    model: 'claude-opus-4-6',
     role: 'Security & Protection',
     tier: 'Commander',
     status: 'online',
-    description: 'Project security, input validation, code audits, and threat mitigation.',
+    description: 'Deep reasoning for security audits, threat modeling, vulnerability analysis, and code safety.',
     icon: Shield,
     color: 'text-amber-400',
   },
   {
-    id: 'yennefer',
-    name: 'Yennefer',
+    id: 'opus-architect',
+    name: 'Opus Architect',
+    model: 'claude-opus-4-6',
     role: 'Architecture & Design',
     tier: 'Commander',
     status: 'online',
-    description: 'System architecture, design patterns, refactoring, and structural integrity.',
+    description: 'System architecture, design patterns, complex refactoring, and structural integrity analysis.',
     icon: Wand2,
     color: 'text-purple-400',
   },
   {
-    id: 'triss',
-    name: 'Triss',
-    role: 'Frontend & UX',
-    tier: 'Coordinator',
-    status: 'online',
-    description: 'UI components, accessibility, responsiveness, and user experience.',
-    icon: Zap,
-    color: 'text-pink-400',
-  },
-  {
-    id: 'jaskier',
-    name: 'Jaskier',
-    role: 'Documentation & Comms',
-    tier: 'Coordinator',
-    status: 'pending',
-    description: 'Documentation, README, changelog, communication, and knowledge base.',
-    icon: Bot,
-    color: 'text-yellow-400',
-  },
-  {
-    id: 'vesemir',
-    name: 'Vesemir',
+    id: 'opus-mentor',
+    name: 'Opus Mentor',
+    model: 'claude-opus-4-6',
     role: 'Code Review & Mentoring',
     tier: 'Commander',
     status: 'online',
-    description: 'Code review, best practices enforcement, mentoring, and quality gates.',
+    description: 'In-depth code review, best practices enforcement, mentoring, and quality gates.',
     icon: Brain,
     color: 'text-blue-400',
   },
   {
-    id: 'ciri',
-    name: 'Ciri',
-    role: 'Innovation & Experiments',
+    id: 'sonnet-frontend',
+    name: 'Sonnet Frontend',
+    model: 'claude-sonnet-4-5',
+    role: 'Frontend & UX',
     tier: 'Coordinator',
     status: 'online',
-    description: 'Emerging technologies, rapid prototyping, and experimental features.',
-    icon: Wand2,
-    color: 'text-emerald-400',
+    description: 'UI components, accessibility, responsive design, and user experience optimization.',
+    icon: Zap,
+    color: 'text-pink-400',
   },
   {
-    id: 'dijkstra',
-    name: 'Dijkstra',
+    id: 'sonnet-docs',
+    name: 'Sonnet Docs',
+    model: 'claude-sonnet-4-5',
+    role: 'Documentation & Comms',
+    tier: 'Coordinator',
+    status: 'online',
+    description: 'Documentation, README, changelog, technical writing, and knowledge base maintenance.',
+    icon: Bot,
+    color: 'text-yellow-400',
+  },
+  {
+    id: 'sonnet-research',
+    name: 'Sonnet Research',
+    model: 'claude-sonnet-4-5',
     role: 'Intelligence & Research',
     tier: 'Coordinator',
     status: 'online',
-    description: 'Data analysis, competitive research, and technological intelligence.',
+    description: 'Data analysis, competitive research, trend analysis, and technological intelligence.',
     icon: Bot,
     color: 'text-indigo-400',
   },
   {
-    id: 'lambert',
-    name: 'Lambert',
-    role: 'Testing & QA',
-    tier: 'Executor',
+    id: 'sonnet-innovator',
+    name: 'Sonnet Innovator',
+    model: 'claude-sonnet-4-5',
+    role: 'Innovation & Experiments',
+    tier: 'Coordinator',
     status: 'online',
-    description: 'Unit tests, integration tests, E2E testing, and quality assurance.',
-    icon: Swords,
-    color: 'text-red-400',
+    description: 'Emerging technologies, rapid prototyping, PoC development, and experimental features.',
+    icon: Wand2,
+    color: 'text-emerald-400',
   },
   {
-    id: 'eskel',
-    name: 'Eskel',
-    role: 'DevOps & Infrastructure',
-    tier: 'Executor',
-    status: 'pending',
-    description: 'CI/CD pipelines, Docker, deployment automation, and monitoring.',
-    icon: GitBranch,
-    color: 'text-green-400',
-  },
-  {
-    id: 'regis',
-    name: 'Regis',
+    id: 'sonnet-strategist',
+    name: 'Sonnet Strategist',
+    model: 'claude-sonnet-4-5',
     role: 'Analysis & Strategy',
     tier: 'Coordinator',
     status: 'online',
-    description: 'Deep analysis, strategic planning, and long-term decision support.',
+    description: 'Deep analysis, strategic planning, risk assessment, and long-term decision support.',
     icon: Brain,
     color: 'text-cyan-400',
   },
   {
-    id: 'zoltan',
-    name: 'Zoltan',
+    id: 'haiku-tester',
+    name: 'Haiku Tester',
+    model: 'claude-haiku-4-5',
+    role: 'Testing & QA',
+    tier: 'Executor',
+    status: 'online',
+    description: 'Fast unit tests, integration tests, E2E testing, and automated quality assurance.',
+    icon: Swords,
+    color: 'text-red-400',
+  },
+  {
+    id: 'haiku-devops',
+    name: 'Haiku DevOps',
+    model: 'claude-haiku-4-5',
+    role: 'DevOps & Infrastructure',
+    tier: 'Executor',
+    status: 'online',
+    description: 'CI/CD pipelines, Docker orchestration, deployment automation, and health monitoring.',
+    icon: GitBranch,
+    color: 'text-green-400',
+  },
+  {
+    id: 'haiku-optimizer',
+    name: 'Haiku Optimizer',
+    model: 'claude-haiku-4-5',
     role: 'Performance & Optimization',
     tier: 'Executor',
     status: 'online',
-    description: 'Performance tuning, profiling, caching strategies, and optimization.',
+    description: 'Bundle profiling, caching strategies, lazy loading, and runtime performance tuning.',
     icon: Swords,
     color: 'text-orange-400',
   },
   {
-    id: 'philippa',
-    name: 'Philippa',
+    id: 'haiku-integrator',
+    name: 'Haiku Integrator',
+    model: 'claude-haiku-4-5',
     role: 'API & Integration',
     tier: 'Executor',
-    status: 'offline',
-    description: 'API design, protocol handling, middleware, and third-party integrations.',
+    status: 'online',
+    description: 'API design, protocol handling, middleware pipelines, and third-party integrations.',
     icon: Zap,
     color: 'text-violet-400',
   },
@@ -215,7 +229,7 @@ const cardVariants = {
 // ---------------------------------------------------------------------------
 
 interface AgentCardProps {
-  agent: WitcherAgent;
+  agent: ClaudeAgent;
 }
 
 function AgentCard({ agent }: AgentCardProps) {
@@ -244,6 +258,7 @@ function AgentCard({ agent }: AgentCardProps) {
                 <StatusIndicator status={agent.status} size="sm" />
               </div>
               <p className="text-[11px] text-[var(--matrix-text-secondary)] truncate">{agent.role}</p>
+              <p className="text-[10px] text-[var(--matrix-accent)]/60 font-mono truncate">{agent.model}</p>
             </div>
           </div>
 
@@ -274,24 +289,24 @@ export function AgentsView() {
   const [activeTier, setActiveTier] = useState<TierFilter>('All');
 
   const filteredAgents = useMemo(() => {
-    if (activeTier === 'All') return WITCHER_AGENTS;
-    return WITCHER_AGENTS.filter((a) => a.tier === activeTier);
+    if (activeTier === 'All') return CLAUDE_AGENTS;
+    return CLAUDE_AGENTS.filter((a) => a.tier === activeTier);
   }, [activeTier]);
 
   const tierCounts = useMemo(() => {
     const counts: Record<TierFilter, number> = {
-      All: WITCHER_AGENTS.length,
+      All: CLAUDE_AGENTS.length,
       Commander: 0,
       Coordinator: 0,
       Executor: 0,
     };
-    for (const agent of WITCHER_AGENTS) {
+    for (const agent of CLAUDE_AGENTS) {
       counts[agent.tier]++;
     }
     return counts;
   }, []);
 
-  const onlineCount = useMemo(() => WITCHER_AGENTS.filter((a) => a.status === 'online').length, []);
+  const onlineCount = useMemo(() => CLAUDE_AGENTS.filter((a) => a.status === 'online').length, []);
 
   const handleTierFilter = useCallback((tier: TierFilter) => {
     setActiveTier(tier);
@@ -311,15 +326,15 @@ export function AgentsView() {
             <Users size={20} className="text-[var(--matrix-accent)]" />
           </div>
           <div>
-            <h2 data-testid="agents-header" className="text-lg font-semibold text-[var(--matrix-accent)] text-glow-subtle">Witcher Agent Swarm</h2>
+            <h2 data-testid="agents-header" className="text-lg font-semibold text-[var(--matrix-accent)] text-glow-subtle">Claude AI Agent Swarm</h2>
             <p data-testid="agents-online-count" className="text-xs text-[var(--matrix-text-secondary)]">
-              {onlineCount} of {WITCHER_AGENTS.length} agents online
+              {onlineCount} of {CLAUDE_AGENTS.length} agents online
             </p>
           </div>
         </div>
 
         <p className="text-sm text-[var(--matrix-text-secondary)] mb-4">
-          12 specialized AI agents managed by ClaudeHydra, organized in a hierarchical swarm structure.
+          12 specialized Claude AI agents — Opus, Sonnet & Haiku — organized in a hierarchical swarm structure.
         </p>
 
         {/* Tier Filter Buttons */}

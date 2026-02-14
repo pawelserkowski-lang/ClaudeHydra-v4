@@ -3,7 +3,7 @@
  * Ported from ClaudeHydra v3 Zustand store (claudeStore.theme)
  * Upgraded to React Context with system preference detection.
  *
- * ClaudeHydra uses the Matrix Green (#00ff41) dark theme by default.
+ * ClaudeHydra uses the neutral white (#ffffff) dark theme by default.
  * Light theme is "White Wolf" with forest green (#2d6a4f).
  */
 
@@ -34,8 +34,8 @@ interface ThemeContextValue {
 // ---------------------------------------------------------------------------
 
 const STORAGE_KEY = 'claude-hydra-theme';
-const META_COLOR_DARK = '#0a1f0a';
-const META_COLOR_LIGHT = '#f5f8f5';
+const META_COLOR_DARK = '#0a0f0d';
+const META_COLOR_LIGHT = '#ffffff';
 
 // ---------------------------------------------------------------------------
 // Context

@@ -35,7 +35,7 @@ const buttonVariants = cva(
           'bg-transparent',
           'text-[var(--matrix-text-secondary)]',
           'hover:text-matrix-accent',
-          'hover:bg-[rgba(0,255,65,0.1)]',
+          'hover:bg-[rgba(255,255,255,0.08)]',
         ].join(' '),
         danger: [
           'bg-matrix-error text-white',

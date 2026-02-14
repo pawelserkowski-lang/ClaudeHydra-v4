@@ -2,11 +2,11 @@
  * Sidebar — ClaudeHydra collapsible navigation sidebar.
  * Ported from ClaudeHydra v3 `web/src/components/Sidebar.tsx`.
  *
- * Layout: Zap logo + nav items + session manager + theme toggle + version.
+ * Layout: EPS AI Solutions logo + nav items + session manager + theme toggle + version.
  * States: expanded (w-60) / collapsed (w-16) with smooth animation.
  * Mobile: overlay drawer on small screens.
  *
- * Green Matrix accent (#00ff41) for active states, hovers, borders, glows.
+ * Neutral white accent (#ffffff) for active states, hovers, borders, glows.
  */
 
 import {
@@ -145,8 +145,8 @@ function SessionItem({ session, isActive, collapsed, onSelect, onDelete, onRenam
         className={cn(
           'w-full p-2 rounded flex items-center justify-center transition-colors',
           isActive
-            ? 'bg-[rgba(0,255,65,0.2)] text-[var(--matrix-accent)]'
-            : 'hover:bg-[rgba(0,255,65,0.1)] text-[var(--matrix-text-secondary)]',
+            ? 'bg-[rgba(255,255,255,0.15)] text-[var(--matrix-accent)]'
+            : 'hover:bg-[rgba(255,255,255,0.08)] text-[var(--matrix-text-secondary)]',
         )}
         title={session.title}
       >
@@ -170,7 +170,7 @@ function SessionItem({ session, isActive, collapsed, onSelect, onDelete, onRenam
         <button
           type="button"
           onClick={handleSave}
-          className="p-1 hover:bg-[rgba(0,255,65,0.2)] rounded text-[var(--matrix-accent)]"
+          className="p-1 hover:bg-[rgba(255,255,255,0.15)] rounded text-[var(--matrix-accent)]"
         >
           <Check size={14} />
         </button>
@@ -187,23 +187,25 @@ function SessionItem({ session, isActive, collapsed, onSelect, onDelete, onRenam
 
   // Default: session row
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       data-testid="sidebar-session-item"
       className={cn(
         'group relative flex items-center gap-2 p-2 rounded cursor-pointer transition-colors w-full text-left',
         isActive
-          ? 'bg-[rgba(0,255,65,0.2)] text-[var(--matrix-accent)]'
-          : 'hover:bg-[rgba(0,255,65,0.1)] text-[var(--matrix-text-secondary)]',
+          ? 'bg-[rgba(255,255,255,0.15)] text-[var(--matrix-accent)]'
+          : 'hover:bg-[rgba(255,255,255,0.08)] text-[var(--matrix-text-secondary)]',
       )}
       onClick={onSelect}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(); } }}
       onMouseEnter={() => setShowTooltip(true)}
       onMouseLeave={() => setShowTooltip(false)}
     >
       <MessageSquare size={14} className="flex-shrink-0" />
       <div className="flex-1 min-w-0">
-        <p className="text-xs truncate">{session.title}</p>
-        <p className="text-[10px] text-[var(--matrix-text-secondary)] truncate">
+        <p className="text-sm truncate">{session.title}</p>
+        <p className="text-xs text-[var(--matrix-text-secondary)] truncate">
           {session.messageCount} message{session.messageCount !== 1 ? 's' : ''}
         </p>
       </div>
@@ -214,7 +216,7 @@ function SessionItem({ session, isActive, collapsed, onSelect, onDelete, onRenam
             e.stopPropagation();
             setIsEditing(true);
           }}
-          className="p-1 hover:bg-[rgba(0,255,65,0.2)] rounded"
+          className="p-1 hover:bg-[rgba(255,255,255,0.15)] rounded"
           title="Rename"
         >
           <Edit2 size={12} />
@@ -237,7 +239,7 @@ function SessionItem({ session, isActive, collapsed, onSelect, onDelete, onRenam
         <div
           className={cn(
             'absolute left-full top-0 ml-2 z-50 w-56 p-2.5 rounded-lg',
-            'bg-[var(--matrix-bg-primary)]/95 border border-[rgba(0,255,65,0.3)]',
+            'bg-[var(--matrix-bg-primary)]/95 border border-[rgba(255,255,255,0.2)]',
             'shadow-lg shadow-black/40 backdrop-blur-sm pointer-events-none',
             'animate-fade-in',
           )}
@@ -254,7 +256,7 @@ function SessionItem({ session, isActive, collapsed, onSelect, onDelete, onRenam
           </div>
         </div>
       )}
-    </button>
+    </div>
   );
 }
 
@@ -329,22 +331,19 @@ function SidebarContent({ collapsed, onClose, isMobile = false }: SidebarContent
   return (
     <>
       {/* ---- Logo ---- */}
-      <div className="p-4 flex items-center justify-between border-b border-[var(--matrix-border)]">
-        {!collapsed ? (
-          <button
-            type="button"
-            data-testid="sidebar-logo"
-            onClick={() => navigateTo('home')}
-            className="flex items-center gap-2 hover:opacity-80 transition-opacity"
-          >
-            <Zap className="w-6 h-6 text-[var(--matrix-accent)]" />
-            <span className="font-mono font-semibold text-[var(--matrix-accent)] text-glow-subtle">ClaudeHydra</span>
-          </button>
-        ) : (
-          <button type="button" data-testid="sidebar-logo" onClick={() => navigateTo('home')} className="mx-auto">
-            <Zap className="w-6 h-6 text-[var(--matrix-accent)]" />
-          </button>
-        )}
+      <div className="p-4 flex items-center justify-center border-b border-[var(--matrix-border)]">
+        <button
+          type="button"
+          data-testid="sidebar-logo"
+          onClick={() => navigateTo('home')}
+          className="hover:opacity-80 transition-opacity"
+        >
+          <img
+            src={isDark ? '/logodark.webp' : '/logolight.webp'}
+            alt="EPS AI Solutions"
+            className={collapsed ? 'w-16 h-16 object-contain' : 'h-36 object-contain'}
+          />
+        </button>
       </div>
 
       {/* ---- Navigation ---- */}
@@ -361,8 +360,8 @@ function SidebarContent({ collapsed, onClose, isMobile = false }: SidebarContent
               className={cn(
                 'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all',
                 isActive
-                  ? 'bg-[var(--matrix-accent)] text-[var(--matrix-bg-primary)] font-medium'
-                  : 'text-[var(--matrix-text-secondary)] hover:text-[var(--matrix-text-primary)] hover:bg-[rgba(0,255,65,0.1)]',
+                  ? 'bg-white/10 text-white font-medium'
+                  : 'text-[var(--matrix-text-secondary)] hover:text-[var(--matrix-text-primary)] hover:bg-[rgba(255,255,255,0.08)]',
               )}
               whileHover={{ x: collapsed ? 0 : 2 }}
               whileTap={{ scale: 0.97 }}
@@ -370,7 +369,7 @@ function SidebarContent({ collapsed, onClose, isMobile = false }: SidebarContent
             >
               <Icon className={cn('w-5 h-5 flex-shrink-0', isActive && 'drop-shadow-[0_0_6px_var(--matrix-accent)]')} />
               {!collapsed && (
-                <span className={cn('text-sm whitespace-nowrap', isActive && 'text-glow-subtle')}>{item.label}</span>
+                <span className={cn('text-base whitespace-nowrap', isActive && 'text-glow-subtle')}>{item.label}</span>
               )}
             </motion.button>
           );
@@ -384,7 +383,7 @@ function SidebarContent({ collapsed, onClose, isMobile = false }: SidebarContent
             type="button"
             data-testid="sidebar-chats-toggle"
             onClick={() => setShowSessions(!showSessions)}
-            className="flex items-center gap-2 text-xs text-[var(--matrix-text-primary)] hover:text-[var(--matrix-accent)] transition-colors"
+            className="flex items-center gap-2 text-sm text-[var(--matrix-text-primary)] hover:text-[var(--matrix-accent)] transition-colors"
           >
             <MessagesSquare size={14} />
             {!collapsed && <span>Chats</span>}
@@ -399,7 +398,7 @@ function SidebarContent({ collapsed, onClose, isMobile = false }: SidebarContent
             type="button"
             data-testid="sidebar-new-chat-btn"
             onClick={handleCreateSession}
-            className="p-1.5 hover:bg-[rgba(0,255,65,0.2)] rounded text-[var(--matrix-accent)] transition-colors"
+            className="p-1.5 hover:bg-[rgba(255,255,255,0.15)] rounded text-[var(--matrix-accent)] transition-colors"
             title="New chat"
           >
             <Plus size={14} />
@@ -447,13 +446,13 @@ function SidebarContent({ collapsed, onClose, isMobile = false }: SidebarContent
             onClick={cycleThemeMode}
             className={cn(
               'flex-1 flex items-center justify-center gap-2 p-2 rounded',
-              'hover:bg-[rgba(0,255,65,0.1)] text-[var(--matrix-text-secondary)]',
+              'hover:bg-[rgba(255,255,255,0.08)] text-[var(--matrix-text-secondary)]',
               'hover:text-[var(--matrix-accent)] transition-colors',
             )}
             title={`Switch to ${themeLabel} mode`}
           >
             <ThemeIcon size={16} />
-            {!collapsed && <span className="text-xs">{themeLabel}</span>}
+            {!collapsed && <span className="text-sm">{themeLabel}</span>}
           </button>
           <button
             type="button"
@@ -461,7 +460,7 @@ function SidebarContent({ collapsed, onClose, isMobile = false }: SidebarContent
             onClick={() => navigateTo('settings')}
             className={cn(
               'flex items-center justify-center p-2 rounded',
-              'hover:bg-[rgba(0,255,65,0.1)] text-[var(--matrix-text-secondary)]',
+              'hover:bg-[rgba(255,255,255,0.08)] text-[var(--matrix-text-secondary)]',
               'hover:text-[var(--matrix-accent)] transition-colors',
             )}
             title="Settings"
@@ -522,7 +521,7 @@ export function Sidebar() {
           onClick={() => setMobileDrawerOpen(true)}
           className={cn(
             'fixed top-3 left-3 z-50 p-2 rounded-lg',
-            'glass-panel hover:bg-[rgba(0,255,65,0.1)] transition-colors',
+            'glass-panel hover:bg-[rgba(255,255,255,0.08)] transition-colors',
           )}
           title="Menu"
         >
@@ -552,7 +551,7 @@ export function Sidebar() {
           animate={{ x: mobileDrawerOpen ? 0 : '-100%' }}
           transition={{ type: 'spring', stiffness: 300, damping: 30 }}
           data-testid="mobile-drawer"
-          className="fixed top-0 left-0 h-full w-72 z-50 glass-panel-solid flex flex-col"
+          className="fixed top-0 left-0 h-full w-72 z-50 glass-panel-dark flex flex-col"
         >
           <SidebarContent collapsed={false} onClose={() => setMobileDrawerOpen(false)} isMobile />
         </motion.aside>
@@ -568,7 +567,7 @@ export function Sidebar() {
       animate={{ width: sidebarCollapsed ? 64 : 240 }}
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
       className={cn(
-        'glass-panel-solid flex flex-col border-r border-[var(--matrix-border)]',
+        'glass-panel-dark flex flex-col',
         'h-full overflow-hidden relative',
       )}
     >

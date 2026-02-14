@@ -1,6 +1,6 @@
 /**
  * Agents TanStack Query hook.
- * Fetches the list of Witcher-themed AI agents from the backend.
+ * Fetches the list of Claude AI agents from the backend.
  */
 
 import { useQuery } from '@tanstack/react-query';

@@ -12,7 +12,7 @@ const cardVariants = cva('rounded-xl transition-all duration-200', {
       default: ['bg-[var(--glass-bg)]', 'border border-matrix-border'].join(' '),
       glass: 'glass-panel',
       elevated: ['bg-[var(--glass-bg)]', 'border border-matrix-border', 'shadow-lg'].join(' '),
-      hover: ['glass-panel', 'hover:border-matrix-accent-dim', 'hover:shadow-[0_0_20px_rgba(0,255,65,0.08)]'].join(' '),
+      hover: ['glass-panel', 'hover:border-matrix-accent-dim', 'hover:shadow-[0_0_20px_rgba(255,255,255,0.08)]'].join(' '),
     },
     padding: {
       none: '',

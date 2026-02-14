@@ -4,18 +4,19 @@
  *
  * Composes:
  *  - ThemeProvider wrapper
- *  - Background layers (RuneRain, background image, gradient, glow, vignette)
- *  - GridBackground (subtle green grid pattern)
+ *  - Background layers (RuneRain, background image, gradient, glow)
  *  - Sidebar (collapsible navigation)
  *  - Content area (children slot)
+ *  - StatusFooter
  *
- * Matches the legacy layout with p-3 gap-3 spacing.
+ * Matches Tissaia v4 style with p-4 gap-4 spacing.
  */
 
 import type { ReactNode } from 'react';
 
-import { RuneRain, ScanLine } from '@/components/atoms';
+import { RuneRain } from '@/components/atoms';
 import { Sidebar } from '@/components/organisms/Sidebar';
+import { StatusFooter } from '@/components/organisms/StatusFooter';
 import { useTheme, ThemeProvider } from '@/contexts/ThemeContext';
 
 // ---------------------------------------------------------------------------
@@ -34,52 +35,61 @@ interface AppShellProps {
 function AppShellInner({ children }: AppShellProps) {
   const { isDark } = useTheme();
 
+  const glassPanel = isDark
+    ? 'bg-black/40 backdrop-blur-xl border border-white/10 shadow-2xl rounded-2xl'
+    : 'bg-white/40 backdrop-blur-xl border border-white/20 shadow-lg rounded-2xl';
+
   return (
-    <div data-testid="app-shell" className="h-screen w-screen flex bg-[var(--matrix-bg-primary)] bg-grid-pattern overflow-hidden">
-      {/* Background layers — fixed behind everything */}
-      <div className="fixed inset-0 pointer-events-none">
-        {/* Rune Rain — falling white runes (dark mode only) */}
-        {isDark && <RuneRain opacity={0.1} />}
+    <div
+      data-testid="app-shell"
+      className={`relative flex h-screen w-full ${
+        isDark
+          ? 'text-white selection:bg-white/30 selection:text-white'
+          : 'text-black selection:bg-emerald-500 selection:text-white'
+      } overflow-hidden font-mono`}
+    >
+      {/* Background Layer — crossfade between dark/light */}
+      <div
+        className={`absolute inset-0 z-[1] bg-cover bg-center pointer-events-none transition-opacity duration-1000 ease-in-out bg-[url('/background.webp')] ${
+          isDark ? 'opacity-40' : 'opacity-0'
+        }`}
+      />
+      <div
+        className={`absolute inset-0 z-[1] bg-cover bg-center pointer-events-none transition-opacity duration-1000 ease-in-out bg-[url('/backgroundlight.webp')] ${
+          !isDark ? 'opacity-35' : 'opacity-0'
+        }`}
+      />
 
-        {/* Background image — switches per theme */}
-        <div
-          className="absolute inset-0 bg-cover bg-center bg-no-repeat transition-opacity duration-1000"
-          style={{
-            backgroundImage: isDark
-              ? 'url(/background.webp)'
-              : 'url(/backgroundlight.webp)',
-            opacity: isDark ? 0.3 : 0.4,
-          }}
-        />
+      {/* Gradient overlay */}
+      <div
+        className={`absolute inset-0 z-[1] bg-gradient-to-b pointer-events-none transition-opacity duration-1000 opacity-60 ${
+          isDark
+            ? 'from-black/40 via-transparent to-black/60'
+            : 'from-white/30 via-transparent to-slate-100/50'
+        }`}
+      />
 
-        {/* Overlay gradient */}
-        <div
-          className="absolute inset-0"
-          style={{
-            background:
-              'linear-gradient(to bottom, rgba(10,31,10,0.5), transparent, rgba(10,31,10,0.7))',
-            backdropFilter: 'blur(2px)',
-          }}
-        />
+      {/* Radial glow */}
+      <div
+        className={`absolute inset-0 z-[1] pointer-events-none bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] ${
+          isDark ? 'from-white/5' : 'from-emerald-500/5'
+        } via-transparent to-transparent`}
+      />
 
-        {/* Radial glow from center */}
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(0,255,65,0.04)_0%,transparent_60%)]" />
+      {/* Rune Rain Effect */}
+      <RuneRain opacity={0.1} />
 
-        {/* Vignette effect */}
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_50%,rgba(0,0,0,0.4)_100%)]" />
-      </div>
-
-      {/* Scan-line CRT overlay */}
-      <ScanLine />
-
-      {/* Main content with padding and gap matching original */}
-      <div className="relative flex w-full h-full p-3 gap-3">
+      {/* Main content with padding and gap matching Tissaia */}
+      <div className="relative z-10 flex h-full w-full backdrop-blur-[1px] gap-4 p-4">
         {/* Sidebar */}
         <Sidebar />
 
         {/* Main content area */}
-        <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative z-[1]">
-          {children}
+        <main className={`flex-1 flex flex-col min-w-0 overflow-hidden relative ${glassPanel}`}>
+          <div className="flex-1 min-h-0 overflow-hidden">
+            {children}
+          </div>
+          <StatusFooter />
         </main>
       </div>
     </div>

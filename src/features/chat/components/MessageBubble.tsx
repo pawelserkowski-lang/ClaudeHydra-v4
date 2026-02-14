@@ -8,12 +8,27 @@
 
 import { Bot, Cpu, FileText, Image as ImageIcon, Loader2, User } from 'lucide-react';
 import { motion } from 'motion/react';
-import { type ReactNode, useMemo } from 'react';
+import { type ReactNode, isValidElement, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
 import { CodeBlock } from '@/components/molecules/CodeBlock';
 import { cn } from '@/shared/utils/cn';
+
+// ---------------------------------------------------------------------------
+// Helper: extract plain text from React children (handles rehype-highlight spans)
+// ---------------------------------------------------------------------------
+
+function extractText(node: ReactNode): string {
+  if (typeof node === 'string') return node;
+  if (typeof node === 'number') return String(node);
+  if (!node || typeof node === 'boolean') return '';
+  if (Array.isArray(node)) return node.map(extractText).join('');
+  if (isValidElement(node)) {
+    return extractText((node.props as { children?: ReactNode }).children);
+  }
+  return '';
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -86,7 +101,7 @@ const markdownComponents = {
   }) {
     const match = /language-(\w+)/.exec(className ?? '');
     const isInline = !node?.position || (node.position.start.line === node.position.end.line && !match);
-    const codeContent = String(children).replace(/\n$/, '');
+    const codeContent = extractText(children).replace(/\n$/, '');
 
     if (isInline) {
       return <InlineCode>{children}</InlineCode>;
