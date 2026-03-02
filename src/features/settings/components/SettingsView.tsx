@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { Card } from '@/components/atoms';
 import { useViewTheme } from '@/shared/hooks/useViewTheme';
 import { cn } from '@/shared/utils/cn';
+import { CompletionSoundSection } from './CompletionSoundSection';
 import { GoogleOAuthSection } from './GoogleOAuthSection';
 import { MaxIterationsSection } from './MaxIterationsSection';
 import { MaxTokensSection } from './MaxTokensSection';
@@ -74,6 +75,13 @@ export const SettingsView = memo(() => {
         <Card>
           <div className="p-6">
             <MaxIterationsSection />
+          </div>
+        </Card>
+
+        {/* Completion Sound Section */}
+        <Card>
+          <div className="p-6">
+            <CompletionSoundSection />
           </div>
         </Card>
       </motion.div>

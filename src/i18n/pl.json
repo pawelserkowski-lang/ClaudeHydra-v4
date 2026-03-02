@@ -143,7 +143,16 @@
       "title": "Iteracje Agenta",
       "description": "Ile rund wywołań narzędzi agent może wykonać na zapytanie. Wyższe wartości pozwalają agentom samodzielnie realizować złożone zadania.",
       "saved": "Zaktualizowano limit iteracji"
+    },
+    "completionSound": {
+      "title": "Dźwięk ukończenia",
+      "description": "Odtwarzaj dźwięk i pokazuj powiadomienie po zakończeniu generowania odpowiedzi.",
+      "toggle": "Przełącz dźwięk ukończenia",
+      "volume": "Głośność"
     }
+  },
+  "completion": {
+    "taskDone": "Zadanie ukończone"
   },
   "oauth": {
     "title": "Anthropic OAuth (Plan MAX)",

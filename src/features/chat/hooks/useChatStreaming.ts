@@ -27,6 +27,7 @@ interface UseChatStreamingOptions {
   renameSessionWithSync: (id: string, newTitle: string) => void;
   generateTitleWithSync: (id: string) => Promise<void>;
   addPrompt: (content: string) => void;
+  onComplete?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -41,6 +42,7 @@ export function useChatStreaming({
   renameSessionWithSync,
   generateTitleWithSync,
   addPrompt,
+  onComplete,
 }: UseChatStreamingOptions) {
   const isOnline = useOnlineStatus();
 
@@ -206,6 +208,7 @@ export function useChatStreaming({
             if (event.done) {
               setSessionLoading(sessionId, false);
               delete abortControllersRef.current[sessionId];
+              onComplete?.();
               // Persist assistant response to DB
               if (responseBuffer) {
                 addMessageWithSync(sessionId, 'assistant', responseBuffer, event.model ?? selectedModel);
@@ -258,6 +261,7 @@ export function useChatStreaming({
       updateSessionMessages,
       setSessionLoading,
       addPrompt,
+      onComplete,
       sessionMessagesRef,
       loadingSessionsRef,
       abortControllersRef,

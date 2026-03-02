@@ -500,6 +500,25 @@ pre,
 }
 
 /* ============================================
+   COMPLETION FEEDBACK
+   ============================================ */
+@keyframes completion-glow {
+  0% {
+    box-shadow: 0 0 0 0 var(--matrix-accent-glow);
+  }
+  30% {
+    box-shadow: 0 0 20px 4px var(--matrix-accent-glow);
+  }
+  100% {
+    box-shadow: 0 0 0 0 var(--matrix-accent-glow);
+  }
+}
+
+.completion-flash {
+  animation: completion-glow 1.5s ease-out forwards;
+}
+
+/* ============================================
    REDUCED MOTION
    ============================================ */
 @media (prefers-reduced-motion: reduce) {

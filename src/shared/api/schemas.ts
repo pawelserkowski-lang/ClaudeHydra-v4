@@ -201,3 +201,92 @@ export const ocrResponseSchema = z.object({
 });
 
 export type OcrResponse = z.infer<typeof ocrResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// WebSocket Protocol
+// ---------------------------------------------------------------------------
+
+const wsStartSchema = z.object({
+  type: z.literal('start'),
+  id: z.string(),
+  model: z.string(),
+  files_loaded: z.array(z.string()).optional().default([]),
+});
+
+const wsTokenSchema = z.object({
+  type: z.literal('token'),
+  content: z.string(),
+});
+
+const wsCompleteSchema = z.object({
+  type: z.literal('complete'),
+  duration_ms: z.number(),
+});
+
+const wsErrorSchema = z.object({
+  type: z.literal('error'),
+  message: z.string(),
+  code: z.string().optional(),
+});
+
+const wsToolCallSchema = z.object({
+  type: z.literal('tool_call'),
+  name: z.string(),
+  args: z.record(z.string(), z.unknown()),
+  iteration: z.number(),
+});
+
+const wsToolResultSchema = z.object({
+  type: z.literal('tool_result'),
+  name: z.string(),
+  success: z.boolean(),
+  summary: z.string(),
+  iteration: z.number(),
+});
+
+const wsToolProgressSchema = z.object({
+  type: z.literal('tool_progress'),
+  iteration: z.number(),
+  tools_completed: z.number(),
+  tools_total: z.number(),
+});
+
+const wsIterationSchema = z.object({
+  type: z.literal('iteration'),
+  number: z.number(),
+  max: z.number(),
+});
+
+const wsPongSchema = z.object({
+  type: z.literal('pong'),
+});
+
+const wsHeartbeatSchema = z.object({
+  type: z.literal('heartbeat'),
+});
+
+export const wsServerMessageSchema = z.discriminatedUnion('type', [
+  wsStartSchema,
+  wsTokenSchema,
+  wsCompleteSchema,
+  wsErrorSchema,
+  wsToolCallSchema,
+  wsToolResultSchema,
+  wsToolProgressSchema,
+  wsIterationSchema,
+  wsPongSchema,
+  wsHeartbeatSchema,
+]);
+
+export type WsServerMessage = z.infer<typeof wsServerMessageSchema>;
+export type WsStartMessage = z.infer<typeof wsStartSchema>;
+export type WsCompleteMessage = z.infer<typeof wsCompleteSchema>;
+export type WsToolCallMessage = z.infer<typeof wsToolCallSchema>;
+export type WsToolResultMessage = z.infer<typeof wsToolResultSchema>;
+export type WsToolProgressMessage = z.infer<typeof wsToolProgressSchema>;
+export type WsIterationMessage = z.infer<typeof wsIterationSchema>;
+
+export type WsClientMessage =
+  | { type: 'execute'; prompt: string; model?: string; tools_enabled?: boolean; session_id?: string }
+  | { type: 'cancel' }
+  | { type: 'ping' };

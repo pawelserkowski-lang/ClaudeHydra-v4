@@ -17,6 +17,7 @@ import { type PromptSuggestion, PromptSuggestions } from '@/components/molecules
 import { useAutoScroll } from '@/features/chat/hooks/useAutoScroll';
 import { type ClaudeModel, FALLBACK_CLAUDE_MODELS, useClaudeModels } from '@/features/chat/hooks/useClaudeModels';
 import { useSessionSync } from '@/features/chat/hooks/useSessionSync';
+import { useCompletionFeedback } from '@/shared/hooks/useCompletionFeedback';
 import { useOnlineStatus } from '@/shared/hooks/useOnlineStatus';
 import { useSettingsQuery } from '@/shared/hooks/useSettings';
 import { cn } from '@/shared/utils/cn';
@@ -373,6 +374,10 @@ export function ClaudeChatView() {
 
   const { promptHistory, addPrompt } = usePromptHistory();
 
+  // ----- Completion feedback (chime + toast + flash) -----------------------
+
+  const { triggerCompletion, flashActive } = useCompletionFeedback();
+
   // ----- Streaming hook (extracted from inline handleSend) -----------------
 
   const { handleSend } = useChatStreaming({
@@ -383,12 +388,16 @@ export function ClaudeChatView() {
     renameSessionWithSync,
     generateTitleWithSync,
     addPrompt,
+    onComplete: triggerCompletion,
   });
 
   // ----- Render -------------------------------------------------------------
 
   return (
-    <div data-testid="chat-view" className="h-full flex flex-col p-4">
+    <div
+      data-testid="chat-view"
+      className={cn('h-full flex flex-col p-4', flashActive && 'completion-flash rounded-xl')}
+    >
       {/* Header */}
       <ChatHeader
         claudeConnected={claudeConnected}

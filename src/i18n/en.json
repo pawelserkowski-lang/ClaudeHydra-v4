@@ -143,7 +143,16 @@
       "title": "Agent Iterations",
       "description": "How many tool-call rounds the agent can perform per request. Higher values let agents complete complex tasks autonomously.",
       "saved": "Max iterations updated"
+    },
+    "completionSound": {
+      "title": "Completion Sound",
+      "description": "Play a chime and show a toast when the AI finishes generating a response.",
+      "toggle": "Toggle completion sound",
+      "volume": "Volume"
     }
+  },
+  "completion": {
+    "taskDone": "Task completed"
   },
   "oauth": {
     "title": "Anthropic OAuth (MAX Plan)",
