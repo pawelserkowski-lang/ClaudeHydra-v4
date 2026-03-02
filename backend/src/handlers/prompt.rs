@@ -82,9 +82,9 @@ pub(crate) async fn resolve_chat_context(state: &AppState, req: &crate::models::
         let prompt_text: String = req.messages.iter().rev().take(1).map(|m| m.content.as_str()).collect();
         let complexity = crate::model_registry::classify_complexity(&prompt_text);
         match complexity {
-            "simple" => crate::model_registry::get_model_id(state, "flash").await,
+            "simple" => crate::model_registry::get_model_id(state, "coordinator").await,
             "complex" => crate::model_registry::get_model_id(state, "commander").await,
-            _ => crate::model_registry::get_model_id(state, "coordinator").await,
+            _ => crate::model_registry::get_model_id(state, "commander").await,
         }
     };
 
