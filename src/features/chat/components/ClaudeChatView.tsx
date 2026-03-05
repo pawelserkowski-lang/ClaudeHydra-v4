@@ -29,6 +29,7 @@ import { useChatMessages } from '../hooks/useChatMessages';
 import { useChatStreaming } from '../hooks/useChatStreaming';
 import { usePromptHistory } from '../hooks/usePromptHistory';
 import { type AgentActivity, AgentActivityPanel, EMPTY_ACTIVITY } from './AgentActivityPanel';
+import { ArtifactPanel } from './ArtifactPanel';
 import { ChatHeader } from './ChatHeader';
 import { type Attachment, ChatInput, type ChatInputHandle } from './ChatInput';
 import { type ChatMessage, MessageBubble } from './MessageBubble';
@@ -646,6 +647,7 @@ export function ClaudeChatView() {
       />
 
       {/* #1 Virtualized message area */}
+      <div className="flex-1 min-h-0 flex relative overflow-hidden gap-2">
       <VirtualizedMessageArea
         messages={messages}
         welcomeMessage={settings?.welcome_message}
@@ -663,6 +665,11 @@ export function ClaudeChatView() {
         scrollToBottom={scrollToBottom}
         onSuggestionSelect={(text) => chatInputRef.current?.setValue(text)}
       />
+
+      <AnimatePresence>
+        {useViewStore((s) => s.activeArtifact) && <ArtifactPanel />}
+      </AnimatePresence>
+      </div>
 
       {/* Streaming indicator bar */}
       {effectiveLoading && (
@@ -708,3 +715,4 @@ export function ClaudeChatView() {
 }
 
 export default ClaudeChatView;
+
