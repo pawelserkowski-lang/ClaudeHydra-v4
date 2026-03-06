@@ -84,7 +84,7 @@ const CLAUDE_API_URL: &str = "https://api.anthropic.com/v1/messages";
 const CLAUDE_MODEL: &str = "claude-sonnet-4-6";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const GEMINI_API_BASE: &str = "https://generativelanguage.googleapis.com/v1beta/models";
-const GEMINI_OCR_MODEL: &str = "gemini-3-flash-preview";
+const GEMINI_OCR_MODEL: &str = "gemini-3.1-flash-preview";
 const MAX_INPUT_SIZE: usize = 30_000_000; // ~22 MB decoded
 const MAX_BATCH_ITEMS: usize = 10;
 

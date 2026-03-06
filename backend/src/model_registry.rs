@@ -402,7 +402,7 @@ pub async fn get_model_id(state: &AppState, use_case: &str) -> String {
         "commander" | "Commander" => (resolved.commander, "claude-opus-4-6"),
         "coordinator" | "Coordinator" => (resolved.coordinator, "claude-sonnet-4-6"),
         "executor" | "Executor" => (resolved.executor, "claude-haiku-4-5-20251001"),
-        "flash" | "Flash" => (resolved.flash, "gemini-3-flash-preview"),
+        "flash" | "Flash" => (resolved.flash, "gemini-3.1-flash-preview"),
         _ => (resolved.coordinator, "claude-sonnet-4-6"),
     };
 
