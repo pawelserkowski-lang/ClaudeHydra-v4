@@ -45,7 +45,7 @@ export interface WsCallbacks {
 // ============================================================================
 
 const MAX_BACKOFF_MS = 16_000;
-export const MAX_RECONNECT_ATTEMPTS = 10;
+export const MAX_RECONNECT_ATTEMPTS = 3;
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const HEARTBEAT_TIMEOUT_MS = 10_000;
 
@@ -225,6 +225,7 @@ export function useWebSocketChat(callbacks: WsCallbacks) {
     };
 
     ws.onerror = () => {
+      // Suppress noisy console errors — onclose handles reconnection
       setStatus('error');
     };
   }, [startHeartbeat, clearTimers]);
