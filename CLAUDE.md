@@ -37,7 +37,7 @@
 - Stack: Rust + Axum 0.8 + SQLx + PostgreSQL 17
 - Route syntax: `{id}` (NOT `:id` — axum 0.8 breaking change)
 - Entry point: `backend/src/lib.rs` → `create_router()` builds all API routes
-- Key modules: `handlers.rs` (system prompt + tool defs), `state.rs` (AppState + LogRingBuffer), `models.rs`, `logs.rs` (4 log endpoints — backend/audit/flyio/activity), `tools/` (mod.rs + fs_tools.rs + pdf_tools.rs + zip_tools.rs + image_tools.rs + git_tools.rs + github_tools.rs + vercel_tools.rs + fly_tools.rs), `model_registry.rs` (dynamic model discovery), `oauth.rs` (Anthropic OAuth PKCE), `oauth_google.rs` (Google OAuth PKCE + API key), `oauth_github.rs` (GitHub OAuth), `oauth_vercel.rs` (Vercel OAuth), `service_tokens.rs` (Fly.io PAT), `mcp/` (client.rs + server.rs + config.rs)
+- Key modules: `handlers.rs` (system prompt + tool defs), `state.rs` (AppState + LogRingBuffer), `models.rs`, `logs.rs` (4 log endpoints — backend/audit/flyio/activity), `tools/` (mod.rs + fs_tools.rs + pdf_tools.rs + zip_tools.rs + image_tools.rs + git_tools.rs + github_tools.rs + vercel_tools.rs + fly_tools.rs), `model_registry.rs` (dynamic model discovery), `browser_proxy.rs` (proxy status + health check + login/logout handlers), `watchdog.rs` (proxy auto-restart + health history), `oauth.rs` (Anthropic OAuth PKCE), `oauth_google.rs` (Google OAuth PKCE + API key), `oauth_github.rs` (GitHub OAuth), `oauth_vercel.rs` (Vercel OAuth), `service_tokens.rs` (Fly.io PAT), `mcp/` (client.rs + server.rs + config.rs)
 - DB: `claudehydra` on localhost:5433 (user: claude, pass: claude_local)
 - Tables: ch_settings, ch_sessions, ch_messages, ch_tool_interactions, ch_model_pins, ch_oauth_tokens, ch_google_auth, ch_oauth_github, ch_oauth_vercel, ch_service_tokens, ch_mcp_servers, ch_mcp_discovered_tools, ch_audit_log, ch_prompt_history
 
@@ -162,4 +162,13 @@
 - Full Jaskier ecosystem docs: `C:\Users\BIURODOM\Desktop\ClaudeDesktop\CLAUDE.md`
 - Covers: shared patterns, cross-project conventions, backend safety rules, OAuth details, MCP, working directory, fly.io infra
 - This file is a project-scoped summary; workspace CLAUDE.md is the source of truth
-- Last synced: 2026-03-01 (F23 + Prompt History + Co dalej?)
+- Last synced: 2026-03-07 (F26 + Browser Proxy Watchdog)
+
+## Browser Proxy (gemini-browser-proxy)
+- **Watchdog**: `watchdog.rs` checks proxy health every 30s via `detailed_health_check()`, auto-restarts with exponential backoff (120s→240s→480s→900s max)
+- **State**: `BrowserProxyStatus` in `state.rs` — `Arc<RwLock<BrowserProxyStatus>>` with ~18 fields (configured, reachable, ready, workers_ready/busy, pool_size, queue_length, consecutive_failures, backoff_level, total_restarts, last_pid)
+- **Health history**: `ProxyHealthHistory` — ring buffer (50 events) tracking status transitions (unreachable→restart_initiated→online)
+- **Endpoints**: `GET /api/browser-proxy/status`, `GET /api/browser-proxy/history`, `POST /api/browser-proxy/login`, `GET /api/browser-proxy/login/status`, `POST /api/browser-proxy/reinit`, `POST /api/browser-proxy/logout`
+- **Env vars**: `BROWSER_PROXY_URL` (enables proxy), `BROWSER_PROXY_DIR` (path to proxy project for auto-restart)
+- **Frontend**: `BrowserProxySection.tsx` (settings), `BrowserProxyBadge` in `StatusFooter.tsx` (green/red/yellow dot, pulse when busy)
+- **Agent tool**: `generate_image` — sends image+prompt to proxy for Gemini browser-based generation
