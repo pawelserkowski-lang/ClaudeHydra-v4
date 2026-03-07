@@ -58,13 +58,14 @@ const proxyDotColor: Record<ProxyState, string> = {
   offline: 'bg-red-500',
 };
 
-const proxyLabel: Record<ProxyState, string> = {
-  ready: 'Proxy',
-  starting: 'Proxy starting',
-  offline: 'Proxy offline',
+const proxyLabelKey: Record<ProxyState, string> = {
+  ready: 'footer.proxyReady',
+  starting: 'footer.proxyStarting',
+  offline: 'footer.proxyOffline',
 };
 
 function BrowserProxyBadge({ status }: { status: BrowserProxyStatus }) {
+  const { t } = useTranslation();
   const state = getProxyState(status);
   const h = status.health;
   const shouldPulse = state === 'ready' && (h?.workers_busy ?? 0) > 0;
@@ -81,26 +82,14 @@ function BrowserProxyBadge({ status }: { status: BrowserProxyStatus }) {
     : [`Status: ${state}`, ...(status.error ? [`Error: ${status.error}`] : [])];
 
   return (
-    <div
-      className="inline-flex items-center gap-1.5 cursor-default"
-      title={tooltipLines.join('\n')}
-    >
+    <div className="inline-flex items-center gap-1.5 cursor-default" title={tooltipLines.join('\n')}>
       <span className="relative flex items-center justify-center">
-        <span
-          className={cn('h-1.5 w-1.5 rounded-full flex-shrink-0', proxyDotColor[state])}
-        />
+        <span className={cn('h-1.5 w-1.5 rounded-full flex-shrink-0', proxyDotColor[state])} />
         {shouldPulse && (
-          <span
-            className={cn(
-              'absolute h-1.5 w-1.5 rounded-full animate-ping opacity-75',
-              proxyDotColor[state],
-            )}
-          />
+          <span className={cn('absolute h-1.5 w-1.5 rounded-full animate-ping opacity-75', proxyDotColor[state])} />
         )}
       </span>
-      <span className="text-[10px] font-mono leading-none text-inherit opacity-70">
-        {proxyLabel[state]}
-      </span>
+      <span className="text-[10px] font-mono leading-none text-inherit opacity-70">{t(proxyLabelKey[state])}</span>
     </div>
   );
 }

@@ -23,7 +23,10 @@
   },
   "footer": {
     "tagline": "AI Swarm",
-    "statusTagline": "AI Swarm Control Center"
+    "statusTagline": "AI Swarm Control Center",
+    "proxyReady": "Proxy",
+    "proxyStarting": "Proxy starting",
+    "proxyOffline": "Proxy offline"
   },
   "common": {
     "delete": "Delete",

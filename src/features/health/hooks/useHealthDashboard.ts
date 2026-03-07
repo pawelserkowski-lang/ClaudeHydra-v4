@@ -20,8 +20,8 @@ interface AuthMode {
   auth_required: boolean;
 }
 
-interface ModelInfo {
-  id: string;
+interface ModelsResponse {
+  providers?: Record<string, unknown[]>;
   [key: string]: unknown;
 }
 
@@ -56,9 +56,9 @@ export function useHealthDashboard(): HealthDashboardData {
     enabled: backendOnline, // don't poll when backend is down
   });
 
-  const modelsQuery = useQuery<ModelInfo[]>({
+  const modelsQuery = useQuery<ModelsResponse>({
     queryKey: ['models', 'list'],
-    queryFn: () => apiGetPolling<ModelInfo[]>('/api/models'),
+    queryFn: () => apiGetPolling<ModelsResponse>('/api/models'),
     refetchInterval: 60_000,
     retry: false, // refetchInterval handles recovery
     enabled: backendOnline, // don't poll when backend is down
@@ -68,7 +68,9 @@ export function useHealthDashboard(): HealthDashboardData {
   const cpuUsage = statsQuery.data?.cpu_usage ?? null;
   const memoryUsedMb = statsQuery.data?.memory_used ?? null;
   const memoryTotalMb = statsQuery.data?.memory_total ?? null;
-  const modelCount = modelsQuery.data ? modelsQuery.data.length : null;
+  const modelCount = modelsQuery.data?.providers
+    ? Object.values(modelsQuery.data.providers).reduce((sum, arr) => sum + (Array.isArray(arr) ? arr.length : 0), 0)
+    : null;
   const loading = healthQuery.isLoading || statsQuery.isLoading;
   const error = healthQuery.isError && statsQuery.isError;
 

@@ -23,7 +23,10 @@
   },
   "footer": {
     "tagline": "Rój AI",
-    "statusTagline": "Centrum Sterowania Rojem AI"
+    "statusTagline": "Centrum Sterowania Rojem AI",
+    "proxyReady": "Proxy",
+    "proxyStarting": "Proxy startuje",
+    "proxyOffline": "Proxy offline"
   },
   "common": {
     "delete": "Usuń",
