@@ -186,3 +186,31 @@ pub async fn browser_proxy_history(
     let total = state.browser_proxy_history.len();
     Json(ProxyHistoryResponse { events, total })
 }
+
+// =======================================================================
+//  GET /api/system/audit
+// =======================================================================
+
+#[utoipa::path(
+    get,
+    path = "/api/system/audit",
+    tag = "system",
+    responses((status = 200, description = "Cargo audit results"))
+)]
+pub async fn system_audit() -> Result<Json<Value>, StatusCode> {
+    let output = std::process::Command::new("cargo")
+        .arg("audit")
+        .arg("--json")
+        .output()
+        .map_err(|e| {
+            tracing::error!("cargo audit failed to spawn: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let result: Value = serde_json::from_slice(&output.stdout).map_err(|e| {
+        tracing::error!("failed to parse cargo audit json: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    Ok(Json(result))
+}

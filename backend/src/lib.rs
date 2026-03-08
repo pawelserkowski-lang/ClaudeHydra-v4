@@ -78,6 +78,7 @@ async fn request_id_middleware(
         handlers::readiness,
         handlers::auth_mode,
         handlers::system_stats,
+        handlers::system_audit,
         // Agents
         handlers::list_agents,
         handlers::list_delegations,
@@ -227,6 +228,7 @@ pub fn create_router(state: AppState) -> Router {
     // ── Protected: other routes — 120 req/min ───────────────────────
     let other_routes = Router::new()
         .route("/api/system/stats", get(handlers::system_stats))
+        .route("/api/system/audit", get(handlers::system_audit))
         // Admin — hot-reload API keys
         .route("/api/admin/rotate-key", post(handlers::rotate_key))
         // Service tokens (Fly.io PAT, etc.) — protected

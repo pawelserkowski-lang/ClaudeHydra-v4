@@ -1,5 +1,6 @@
 // src/features/delegations/hooks/useDelegations.ts
 import { useEffect } from 'react';
+import { toast } from 'sonner';
 import { create } from 'zustand';
 import { apiGet, BASE_URL } from '@/shared/api/client';
 
@@ -62,6 +63,10 @@ export const useDelegationStore = create<DelegationStore>((set) => ({
         tasks[index] = newTask;
       } else {
         tasks.unshift(newTask);
+        toast.info(`New Delegation: ${newTask.agent_name}`, {
+          description:
+            newTask.task_prompt.length > 60 ? newTask.task_prompt.substring(0, 60) + '...' : newTask.task_prompt,
+        });
       }
 
       // Re-sort tasks by created_at DESC to maintain order
