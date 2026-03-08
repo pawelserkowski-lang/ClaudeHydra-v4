@@ -128,6 +128,7 @@ pub async fn require_api_key_auth(
     request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    let path = request.uri().path().to_string();
     let auth_header = request
         .headers()
         .get("authorization")
@@ -155,12 +156,12 @@ pub async fn require_api_key_auth(
             if is_valid {
                 Ok(next.run(request).await)
             } else {
-                tracing::warn!("API Key Auth failed: invalid token");
+                tracing::warn!("API Key Auth failed: invalid token for path {}", path);
                 Err(StatusCode::UNAUTHORIZED)
             }
         }
         _ => {
-            tracing::warn!("API Key Auth failed: missing or malformed Authorization header");
+            tracing::warn!("API Key Auth failed: missing or malformed Authorization header for path {}", path);
             Err(StatusCode::UNAUTHORIZED)
         }
     }

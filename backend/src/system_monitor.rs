@@ -34,7 +34,7 @@ fn get_cpu_times() -> (u64, u64, u64) {
 pub fn spawn(system_monitor: Arc<RwLock<SystemSnapshot>>) {
     tokio::spawn(async move {
         let mut sys = sysinfo::System::new_all();
-        let mut networks = sysinfo::Networks::new_with_sysinfo(&sys);
+        let mut networks = sysinfo::Networks::new_with_refreshed_list();
 
         // CPU: Windows-native GetSystemTimes
         #[cfg(windows)]
@@ -86,10 +86,9 @@ pub fn spawn(system_monitor: Arc<RwLock<SystemSnapshot>>) {
             sys.refresh_memory();
 
             // Network via sysinfo
-            networks.refresh_list();
-            networks.refresh();
-            let network_rx_bytes: u64 = networks.iter().map(|(_, data)| data.received()).sum();
-            let network_tx_bytes: u64 = networks.iter().map(|(_, data)| data.transmitted()).sum();
+            networks.refresh(true);
+            let network_rx_bytes: u64 = networks.iter().map(|(_, data): (&String, &sysinfo::NetworkData)| data.received()).sum();
+            let network_tx_bytes: u64 = networks.iter().map(|(_, data): (&String, &sysinfo::NetworkData)| data.transmitted()).sum();
 
             let snap = SystemSnapshot {
                 cpu_usage_percent: cpu,
