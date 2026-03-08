@@ -121,21 +121,6 @@ pub async fn generate_image(
     unreachable!()
 }
 
-/// Check if the browser proxy is healthy and ready.
-pub async fn health_check(client: &reqwest::Client) -> bool {
-    let url = format!("{}/health", proxy_base_url());
-    match client.get(&url).timeout(Duration::from_secs(5)).send().await {
-        Ok(resp) => {
-            if let Ok(json) = resp.json::<serde_json::Value>().await {
-                json["ready"].as_bool().unwrap_or(false)
-            } else {
-                false
-            }
-        }
-        Err(_) => false,
-    }
-}
-
 /// Return the configured proxy directory for auto-restart.
 pub fn proxy_dir() -> Option<String> {
     std::env::var("BROWSER_PROXY_DIR").ok().filter(|s| !s.is_empty())
