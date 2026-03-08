@@ -1,19 +1,19 @@
 import { Code2, Maximize2, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { memo, useState } from 'react';
-import { useViewStore } from '@/stores/viewStore';
 import { CodeBlock } from '@/components/molecules/CodeBlock';
 import { cn } from '@/shared/utils/cn';
+import { useViewStore } from '@/stores/viewStore';
 
 export const ArtifactPanel = memo(function ArtifactPanel() {
   const activeArtifact = useViewStore((s) => s.activeArtifact);
   const setActiveArtifact = useViewStore((s) => s.setActiveArtifact);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  if (!activeArtifact) return null;
-
-  const isHtml = activeArtifact.language === 'html' || activeArtifact.language === 'svg';
+  const isHtml = activeArtifact?.language === 'html' || activeArtifact?.language === 'svg';
   const [mode, setMode] = useState<'code' | 'preview'>(isHtml ? 'preview' : 'code');
+
+  if (!activeArtifact) return null;
 
   return (
     <motion.div
@@ -23,7 +23,7 @@ export const ArtifactPanel = memo(function ArtifactPanel() {
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
       className={cn(
         'h-full flex flex-col border-l border-[var(--glass-border)] bg-[var(--matrix-bg-primary)] z-20 shrink-0 relative overflow-hidden',
-        isFullscreen ? 'absolute inset-0' : ''
+        isFullscreen ? 'absolute inset-0' : '',
       )}
     >
       {/* Header */}
@@ -42,14 +42,26 @@ export const ArtifactPanel = memo(function ArtifactPanel() {
           {isHtml && (
             <div className="flex bg-[var(--matrix-bg-tertiary)] rounded-md p-0.5 mr-2">
               <button
+                type="button"
                 onClick={() => setMode('preview')}
-                className={cn('px-2 py-1 rounded text-xs transition-colors', mode === 'preview' ? 'bg-[var(--matrix-accent)]/20 text-[var(--matrix-accent)]' : 'text-[var(--matrix-text-secondary)]')}
+                className={cn(
+                  'px-2 py-1 rounded text-xs transition-colors',
+                  mode === 'preview'
+                    ? 'bg-[var(--matrix-accent)]/20 text-[var(--matrix-accent)]'
+                    : 'text-[var(--matrix-text-secondary)]',
+                )}
               >
                 Preview
               </button>
               <button
+                type="button"
                 onClick={() => setMode('code')}
-                className={cn('px-2 py-1 rounded text-xs transition-colors', mode === 'code' ? 'bg-[var(--matrix-accent)]/20 text-[var(--matrix-accent)]' : 'text-[var(--matrix-text-secondary)]')}
+                className={cn(
+                  'px-2 py-1 rounded text-xs transition-colors',
+                  mode === 'code'
+                    ? 'bg-[var(--matrix-accent)]/20 text-[var(--matrix-accent)]'
+                    : 'text-[var(--matrix-text-secondary)]',
+                )}
               >
                 Code
               </button>
@@ -57,6 +69,7 @@ export const ArtifactPanel = memo(function ArtifactPanel() {
           )}
 
           <button
+            type="button"
             onClick={() => setIsFullscreen(!isFullscreen)}
             className="p-1.5 rounded-md hover:bg-[var(--matrix-accent)]/10 text-[var(--matrix-text-secondary)] hover:text-[var(--matrix-accent)] transition-colors"
             title="Toggle Fullscreen"
@@ -64,6 +77,7 @@ export const ArtifactPanel = memo(function ArtifactPanel() {
             <Maximize2 size={16} />
           </button>
           <button
+            type="button"
             onClick={() => setActiveArtifact(null)}
             className="p-1.5 rounded-md hover:bg-red-500/20 text-[var(--matrix-text-secondary)] hover:text-red-400 transition-colors"
             title="Close"

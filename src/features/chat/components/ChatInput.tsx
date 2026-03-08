@@ -184,7 +184,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         if (!e.dataTransfer?.types.includes('Files')) return;
         e.preventDefault();
         setIsDragging(false);
-        
+
         if (e.dataTransfer.files.length > 0) {
           const files = Array.from(e.dataTransfer.files);
           for (const file of files) {
@@ -195,18 +195,23 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       [processFile],
     );
 
-    const handleTextareaDrop = useCallback((e: DragEvent<HTMLTextAreaElement>) => {
-      const text = e.dataTransfer.getData('text/plain');
-      if (text && e.dataTransfer.files.length === 0) {
-        const lines = text.split('\n');
-        if (lines.length > 10) {
-          e.preventDefault();
-          e.stopPropagation();
-          const file = new File([text.substring(0, 50000)], `Zrzut $($lines.length) linii.txt`, { type: 'text/plain' });
-          void processFile(file);
+    const handleTextareaDrop = useCallback(
+      (e: DragEvent<HTMLTextAreaElement>) => {
+        const text = e.dataTransfer.getData('text/plain');
+        if (text && e.dataTransfer.files.length === 0) {
+          const lines = text.split('\n');
+          if (lines.length > 10) {
+            e.preventDefault();
+            e.stopPropagation();
+            const file = new File([text.substring(0, 50000)], `Zrzut $($lines.length) linii.txt`, {
+              type: 'text/plain',
+            });
+            void processFile(file);
+          }
         }
-      }
-    }, [processFile]);
+      },
+      [processFile],
+    );
 
     const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
       if (!e.dataTransfer?.types.includes('Files')) return;
@@ -303,7 +308,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
           const lines = text.split('\n');
           if (lines.length > 10) {
             e.preventDefault();
-            const file = new File([text.substring(0, 50000)], `Wklejono $($lines.length) linii.txt`, { type: 'text/plain' });
+            const file = new File([text.substring(0, 50000)], `Wklejono $($lines.length) linii.txt`, {
+              type: 'text/plain',
+            });
             void processFile(file);
             return;
           }
@@ -442,6 +449,3 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
 );
 
 ChatInput.displayName = 'ChatInput';
-
-
-

@@ -201,6 +201,7 @@ pre,
   background: transparent;
 }
 
+/* biome-ignore lint/style/noDescendingSpecificity: Allow global scrollbar styles */
 * {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
@@ -522,13 +523,16 @@ pre,
    REDUCED MOTION
    ============================================ */
 @media (prefers-reduced-motion: reduce) {
+  /* biome-ignore lint/style/noDescendingSpecificity: Allow global animation reset */
   *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
+  /* biome-ignore lint/style/noDescendingSpecificity: Allow global animation reset */
+    *::before,
+  /* biome-ignore lint/style/noDescendingSpecificity: Allow global animation reset */
+    *::after {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+    transition-duration: 0.01ms;
+    scroll-behavior: auto;
   }
 }
 

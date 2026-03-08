@@ -30,14 +30,14 @@ export function useChatMessages() {
   const updateSessionMessages = useCallback((sessionId: string, updater: (prev: ChatMessage[]) => ChatMessage[]) => {
     const prev = sessionMessagesRef.current[sessionId] ?? [];
     let updated = updater(prev);
-    
+
     // Auto-compaction: if messages exceed 25, keep the last 15 to save tokens
     if (updated.length > 25) {
       const compactedMessage: ChatMessage = {
         id: crypto.randomUUID(),
         role: 'system',
         content: '_[System] History automatically compacted to save tokens. Older messages archived._',
-        timestamp: new Date()
+        timestamp: new Date(),
       };
       updated = [compactedMessage, ...updated.slice(updated.length - 15)];
     }
@@ -141,5 +141,3 @@ export function useChatMessages() {
     clearChat,
   };
 }
-
-

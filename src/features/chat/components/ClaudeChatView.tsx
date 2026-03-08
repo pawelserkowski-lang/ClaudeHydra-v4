@@ -462,13 +462,13 @@ export function ClaudeChatView() {
         const isJson = text.startsWith('[') || text.startsWith('{');
         const isTable = text.includes('|---') || text.includes('| ---');
         const isSql = /^(SELECT|UPDATE|INSERT|DELETE|CREATE|ALTER|DROP|WITH)\s+/i.test(text);
-        
+
         if (isJson || isTable || isSql || text.length > 800) {
           useViewStore.getState().setActiveArtifact({
-            id: "tool-res-$($msg.iteration)-$($msg.name)",
+            id: 'tool-res-$($msg.iteration)-$($msg.name)',
             code: text,
             language: isJson ? 'json' : isTable ? 'markdown' : isSql ? 'sql' : 'text',
-            title: "Result: $($msg.name)"
+            title: 'Result: $($msg.name)',
           });
         }
       }
@@ -665,27 +665,25 @@ export function ClaudeChatView() {
 
       {/* #1 Virtualized message area */}
       <div className="flex-1 min-h-0 flex relative overflow-hidden gap-2">
-      <VirtualizedMessageArea
-        messages={messages}
-        welcomeMessage={settings?.welcome_message}
-        setChatRef={setChatRef}
-        bottomRef={bottomRef}
-        messagesEndRef={messagesEndRef}
-        searchOpen={searchOpen}
-        searchMatchId={searchMatchId}
-        onSearchMatchChange={handleSearchMatchChange}
-        onSearchClose={() => {
-          setSearchOpen(false);
-          setSearchMatchId(null);
-        }}
-        showNewMessages={showNewMessages}
-        scrollToBottom={scrollToBottom}
-        onSuggestionSelect={(text) => chatInputRef.current?.setValue(text)}
-      />
+        <VirtualizedMessageArea
+          messages={messages}
+          welcomeMessage={settings?.welcome_message}
+          setChatRef={setChatRef}
+          bottomRef={bottomRef}
+          messagesEndRef={messagesEndRef}
+          searchOpen={searchOpen}
+          searchMatchId={searchMatchId}
+          onSearchMatchChange={handleSearchMatchChange}
+          onSearchClose={() => {
+            setSearchOpen(false);
+            setSearchMatchId(null);
+          }}
+          showNewMessages={showNewMessages}
+          scrollToBottom={scrollToBottom}
+          onSuggestionSelect={(text) => chatInputRef.current?.setValue(text)}
+        />
 
-      <AnimatePresence>
-        {useViewStore((s) => s.activeArtifact) && <ArtifactPanel />}
-      </AnimatePresence>
+        <AnimatePresence>{useViewStore((s) => s.activeArtifact) && <ArtifactPanel />}</AnimatePresence>
       </div>
 
       {/* Streaming indicator bar */}
@@ -732,6 +730,3 @@ export function ClaudeChatView() {
 }
 
 export default ClaudeChatView;
-
-
-

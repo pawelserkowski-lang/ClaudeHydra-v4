@@ -1,7 +1,7 @@
 /** Jaskier Shared Pattern — Browser Proxy Status Hook */
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiGet, apiPost, apiDelete } from '@/shared/api/client';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { apiDelete, apiGet, apiPost } from '@/shared/api/client';
 
 export interface BrowserProxyStatus {
   configured: boolean;

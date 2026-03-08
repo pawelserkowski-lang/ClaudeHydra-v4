@@ -146,6 +146,9 @@ pub struct BrowserProxyStatus {
     pub configured: bool,
     pub reachable: bool,
     pub ready: bool,
+    /// "pool" for in-process Rust browser pool, "proxy" for Node.js HTTP proxy
+    #[serde(default)]
+    pub mode: String,
     pub workers_ready: u32,
     pub workers_busy: u32,
     pub pool_size: u32,
@@ -228,6 +231,7 @@ pub(crate) async fn detailed_health_check(client: &reqwest::Client) -> BrowserPr
                     configured: true,
                     reachable: true,
                     ready: json["ready"].as_bool().unwrap_or(false),
+                    mode: "proxy".to_string(),
                     workers_ready: json["workers_ready"].as_u64().unwrap_or(0) as u32,
                     workers_busy: json["workers_busy"].as_u64().unwrap_or(0) as u32,
                     pool_size: json["pool_size"].as_u64().unwrap_or(0) as u32,

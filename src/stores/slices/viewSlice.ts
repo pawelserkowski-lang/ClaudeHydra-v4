@@ -27,4 +27,3 @@ export const createViewSlice: StateCreator<ViewStoreState, [], [], ViewSlice> = 
   setMobileDrawerOpen: (open) => set({ mobileDrawerOpen: open }),
   setActiveArtifact: (artifact) => set({ activeArtifact: artifact }),
 });
-

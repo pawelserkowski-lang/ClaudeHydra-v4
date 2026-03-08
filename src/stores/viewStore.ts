@@ -11,9 +11,9 @@ import { useCallback } from 'react';
 import { create } from 'zustand';
 import { devtools, persist } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
+import type { ChatSession, ChatTab } from '@/shared/types/store';
 import { createSessionSlice, type SessionSlice } from './slices/sessionSlice';
 import { createViewSlice, type ViewSlice } from './slices/viewSlice';
-import type { ChatSession, ChatTab } from '@/shared/types/store';
 
 // Re-export shared types so existing imports from '@/stores/viewStore' keep working
 export type { ChatSession, ChatTab } from '@/shared/types/store';

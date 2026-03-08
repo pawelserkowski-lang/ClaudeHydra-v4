@@ -70,6 +70,7 @@ export const AgentActivityPanel = memo<{ activity: AgentActivity }>(({ activity 
   const toolRowsList = useMemo(
     () =>
       activity.tools.map((tool, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: Tools list is stable/append-only
         <ToolRow key={`tool-${tool.iteration}-${tool.name}-${i}`} tool={tool} theme={theme} />
       )),
     [activity.tools, theme],

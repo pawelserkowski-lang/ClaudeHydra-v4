@@ -11,13 +11,13 @@
  * ClaudeHydra-v4: Green Matrix accent with glass-panel from globals.css.
  */
 
-import { Check, Clipboard, Terminal, Maximize2 } from 'lucide-react';
-import { useViewStore } from '@/stores/viewStore';
+import { Check, Clipboard, Maximize2, Terminal } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { memo, useCallback, useMemo, useRef, useState, useEffect } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { copyToClipboard } from '@/shared/utils/clipboard';
 import { cn } from '@/shared/utils/cn';
+import { useViewStore } from '@/stores/viewStore';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -103,15 +103,29 @@ export const CodeBlock = memo(function CodeBlock({
 
   const lang = language?.toLowerCase() ?? '';
   const displayName = LANGUAGE_NAMES[lang] ?? (lang ? lang.toUpperCase() : 'Code');
-  
+
   const setActiveArtifact = useViewStore((s) => s.setActiveArtifact);
 
   // Split into lines for line-number rendering
   const lines = useMemo(() => code.split('\n'), [code]);
 
   // ----- Auto-open large artifacts -------------------------------------
-  const isArtifactLanguage = ['html', 'css', 'javascript', 'typescript', 'tsx', 'jsx', 'json', 'yaml', 'mermaid', 'svg', 'python', 'rust', 'go'].includes(lang);
-  
+  const isArtifactLanguage = [
+    'html',
+    'css',
+    'javascript',
+    'typescript',
+    'tsx',
+    'jsx',
+    'json',
+    'yaml',
+    'mermaid',
+    'svg',
+    'python',
+    'rust',
+    'go',
+  ].includes(lang);
+
   useEffect(() => {
     if (isArtifactLanguage && lines.length >= 15 && code.length > 300) {
       // Create a hash/id to track if we've already opened this exact block
@@ -158,7 +172,9 @@ export const CodeBlock = memo(function CodeBlock({
           {isArtifactLanguage && lines.length >= 5 && (
             <button
               type="button"
-              onClick={() => setActiveArtifact({ id: code.substring(0, 50), code, language: lang, title: 'Code Artifact' })}
+              onClick={() =>
+                setActiveArtifact({ id: code.substring(0, 50), code, language: lang, title: 'Code Artifact' })
+              }
               className={cn(
                 'flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-mono transition-colors',
                 'text-[var(--matrix-text-secondary)] hover:text-[var(--matrix-accent)] hover:bg-[var(--matrix-accent)]/10',
@@ -243,5 +259,3 @@ export const CodeBlock = memo(function CodeBlock({
     </div>
   );
 });
-
-

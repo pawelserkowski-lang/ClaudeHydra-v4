@@ -1,5 +1,5 @@
 import type { StateCreator } from 'zustand';
-import type { Session, ChatTab } from '../types';
+import type { ChatTab, Session } from '../types';
 import type { ViewStoreState } from '../viewStore';
 
 export interface SessionSlice {
@@ -102,9 +102,7 @@ export const createSessionSlice: StateCreator<ViewStoreState, [], [], SessionSli
 
   updateSessionTitle: (id, newTitle) =>
     set((state) => ({
-      chatSessions: state.chatSessions.map((s) =>
-        s.id === id ? { ...s, title: newTitle, updatedAt: Date.now() } : s,
-      ),
+      chatSessions: state.chatSessions.map((s) => (s.id === id ? { ...s, title: newTitle, updatedAt: Date.now() } : s)),
       tabs: state.tabs.map((t) => (t.sessionId === id ? { ...t, title: newTitle } : t)),
     })),
 
@@ -147,9 +145,7 @@ export const createSessionSlice: StateCreator<ViewStoreState, [], [], SessionSli
 
   replaceSession: (tempId, realId, title) =>
     set((state) => ({
-      chatSessions: state.chatSessions.map((s) =>
-        s.id === tempId ? { ...s, id: realId, title, _pending: false } : s,
-      ),
+      chatSessions: state.chatSessions.map((s) => (s.id === tempId ? { ...s, id: realId, title, _pending: false } : s)),
       tabs: state.tabs.map((t) => (t.sessionId === tempId ? { ...t, sessionId: realId, title } : t)),
       activeSessionId: state.activeSessionId === tempId ? realId : state.activeSessionId,
     })),
