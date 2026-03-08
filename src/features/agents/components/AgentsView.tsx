@@ -10,14 +10,52 @@
  * Executor tier = Claude Haiku 4.5 (fast, efficient)
  */
 
-import { Bot, Brain, Crown, Filter, GitBranch, Shield, Swords, Users, Wand2, Zap } from 'lucide-react';
+import {
+  Bot,
+  Brain,
+  Crown,
+  Filter,
+  GitBranch,
+  Shield,
+  Swords,
+  Terminal as TerminalIcon,
+  Users,
+  Wand2,
+  Zap,
+} from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Badge, Button, Card } from '@/components/atoms';
 import { StatusIndicator, type StatusState } from '@/components/molecules';
 import { EmptyState } from '@/components/molecules/EmptyState';
+import { type BackendLogEntry, useBackendLogs } from '@/features/logs/hooks/useLogs';
 import { cn } from '@/shared/utils/cn';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function formatTimestamp(ts: string): string {
+  try {
+    const d = new Date(ts);
+    return (
+      d.toLocaleTimeString('en-GB', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) +
+      '.' +
+      String(d.getMilliseconds()).padStart(3, '0')
+    );
+  } catch {
+    return ts;
+  }
+}
+
+function levelBadgeClasses(level: string): string {
+  const l = level.toUpperCase();
+  if (l === 'ERROR') return 'text-red-400';
+  if (l === 'WARN') return 'text-amber-400';
+  if (l === 'INFO') return 'text-blue-400';
+  return 'text-gray-400';
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -291,6 +329,10 @@ export function AgentsView() {
   const { t } = useTranslation();
   const [activeTier, setActiveTier] = useState<TierFilter>('All');
 
+  // Real-time terminal logs state
+  const { data, isLoading } = useBackendLogs({ limit: 50 }, true);
+  const logs = data?.logs ?? [];
+
   const filteredAgents = useMemo(() => {
     if (activeTier === 'All') return CLAUDE_AGENTS;
     return CLAUDE_AGENTS.filter((a) => a.tier === activeTier);
@@ -312,78 +354,112 @@ export function AgentsView() {
   const onlineCount = useMemo(() => CLAUDE_AGENTS.filter((a) => a.status === 'online').length, []);
 
   return (
-    <div data-testid="agents-view" className="h-full flex flex-col overflow-auto p-4 sm:p-6">
-      {/* Header */}
-      <motion.div
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
-        className="mb-6"
-      >
-        <div className="flex items-center gap-3 mb-2">
-          <div className="w-10 h-10 rounded-lg bg-[var(--matrix-accent)]/10 border border-[var(--matrix-accent)]/20 flex items-center justify-center">
-            <Users size={20} className="text-[var(--matrix-accent)]" />
-          </div>
-          <div>
-            <h2
-              data-testid="agents-header"
-              className="text-lg font-semibold text-[var(--matrix-accent)] text-glow-subtle"
-            >
-              Claude AI Agent Swarm
-            </h2>
-            <p data-testid="agents-online-count" className="text-xs text-[var(--matrix-text-secondary)]">
-              {onlineCount} of {CLAUDE_AGENTS.length} agents online
-            </p>
-          </div>
-        </div>
-
-        <p className="text-sm text-[var(--matrix-text-secondary)] mb-4">
-          12 specialized Claude AI agents — Opus, Sonnet & Haiku — organized in a hierarchical swarm structure.
-        </p>
-
-        {/* Tier Filter Buttons */}
-        <div data-testid="agents-filter-bar" className="flex items-center gap-2 flex-wrap">
-          <Filter size={14} className="text-[var(--matrix-text-secondary)]" />
-          {TIER_FILTERS.map((tier) => (
-            <Button
-              key={tier}
-              data-testid={`agents-filter-${tier.toLowerCase()}`}
-              variant={activeTier === tier ? 'primary' : 'secondary'}
-              size="sm"
-              onClick={() => setActiveTier(tier)}
-            >
-              {tier}
-              <span className="ml-1 opacity-70">({tierCounts[tier]})</span>
-            </Button>
-          ))}
-        </div>
-      </motion.div>
-
-      {/* Agent Grid */}
-      <AnimatePresence mode="popLayout">
+    <div data-testid="agents-view" className="h-full flex flex-col xl:flex-row gap-4 overflow-hidden p-4 sm:p-6">
+      {/* Main Agents Area */}
+      <div className="flex-1 flex flex-col overflow-auto pr-2">
+        {/* Header */}
         <motion.div
-          key={activeTier}
-          variants={containerVariants}
-          initial="hidden"
-          animate="visible"
-          data-testid="agents-grid"
-          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+          className="mb-6 flex-shrink-0"
         >
-          {filteredAgents.map((agent) => (
-            <AgentCard key={agent.id} agent={agent} />
-          ))}
-        </motion.div>
-      </AnimatePresence>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-10 h-10 rounded-lg bg-[var(--matrix-accent)]/10 border border-[var(--matrix-accent)]/20 flex items-center justify-center">
+              <Users size={20} className="text-[var(--matrix-accent)]" />
+            </div>
+            <div>
+              <h2
+                data-testid="agents-header"
+                className="text-lg font-semibold text-[var(--matrix-accent)] text-glow-subtle"
+              >
+                Claude AI Agent Swarm
+              </h2>
+              <p data-testid="agents-online-count" className="text-xs text-[var(--matrix-text-secondary)]">
+                {onlineCount} of {CLAUDE_AGENTS.length} agents online
+              </p>
+            </div>
+          </div>
 
-      {/* Empty State */}
-      {filteredAgents.length === 0 && (
-        <EmptyState
-          icon={Users}
-          title={t('agents.noMatch', 'No agents match the selected filter')}
-          description={t('agents.noMatchDesc', 'Try selecting a different tier filter to see agents.')}
-          className="flex-1"
-        />
-      )}
+          <p className="text-sm text-[var(--matrix-text-secondary)] mb-4">
+            12 specialized Claude AI agents — Opus, Sonnet & Haiku — organized in a hierarchical swarm structure.
+          </p>
+
+          {/* Tier Filter Buttons */}
+          <div data-testid="agents-filter-bar" className="flex items-center gap-2 flex-wrap">
+            <Filter size={14} className="text-[var(--matrix-text-secondary)]" />
+            {TIER_FILTERS.map((tier) => (
+              <Button
+                key={tier}
+                data-testid={`agents-filter-${tier.toLowerCase()}`}
+                variant={activeTier === tier ? 'primary' : 'secondary'}
+                size="sm"
+                onClick={() => setActiveTier(tier)}
+              >
+                {tier}
+                <span className="ml-1 opacity-70">({tierCounts[tier]})</span>
+              </Button>
+            ))}
+          </div>
+        </motion.div>
+
+        {/* Agent Grid */}
+        <div className="flex-1 overflow-auto">
+          <AnimatePresence mode="popLayout">
+            <motion.div
+              key={activeTier}
+              variants={containerVariants}
+              initial="hidden"
+              animate="visible"
+              data-testid="agents-grid"
+              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pb-4"
+            >
+              {filteredAgents.map((agent) => (
+                <AgentCard key={agent.id} agent={agent} />
+              ))}
+            </motion.div>
+          </AnimatePresence>
+
+          {/* Empty State */}
+          {filteredAgents.length === 0 && (
+            <EmptyState
+              icon={Users}
+              title={t('agents.noMatch', 'No agents match the selected filter')}
+              description={t('agents.noMatchDesc', 'Try selecting a different tier filter to see agents.')}
+              className="flex-1"
+            />
+          )}
+        </div>
+      </div>
+
+      {/* Terminal Logs Sidebar */}
+      <div className="w-full xl:w-96 h-64 xl:h-full flex-shrink-0 flex flex-col border border-[var(--matrix-border)] rounded-xl bg-[var(--matrix-bg-secondary)] overflow-hidden shadow-lg">
+        <div className="flex items-center gap-2 p-3 border-b border-[var(--matrix-border)] bg-black/20">
+          <TerminalIcon size={16} className="text-[var(--matrix-accent)]" />
+          <h3 className="text-sm font-mono font-semibold text-[var(--matrix-text-primary)]">Agents Terminal</h3>
+          {isLoading && (
+            <span className="ml-auto text-xs text-[var(--matrix-text-secondary)] animate-pulse">Loading...</span>
+          )}
+        </div>
+        <div className="flex-1 overflow-y-auto p-3 space-y-1.5 font-mono text-[10px] sm:text-xs bg-black/40">
+          {logs.length === 0 && !isLoading && (
+            <div className="text-[var(--matrix-text-secondary)] italic">Awaiting logs...</div>
+          )}
+          {logs.map((entry: BackendLogEntry, i: number) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: Logs can share timestamp, array index needed for uniqueness
+            <div key={`${entry.timestamp}-${i}`} className="flex items-start gap-2 break-all">
+              <span className="text-[var(--matrix-text-secondary)] opacity-50 shrink-0">
+                {formatTimestamp(entry.timestamp)}
+              </span>
+              <span className={cn('shrink-0 font-semibold', levelBadgeClasses(entry.level))}>[{entry.level}]</span>
+              <span className="text-[var(--matrix-text-primary)]">
+                <span className="text-[var(--matrix-accent)] opacity-70 mr-1">{entry.target}:</span>
+                {entry.message}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
