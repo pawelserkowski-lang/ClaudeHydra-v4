@@ -121,3 +121,47 @@ mod tests {
         assert!(!check_bearer_token(Some("bearer mysecret"), "mysecret"));
     }
 }
+
+/// Middleware that enforces Bearer token auth against the `api_keys` table.
+pub async fn require_api_key_auth(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let auth_header = request
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok());
+
+    match auth_header {
+        Some(header) if header.starts_with("Bearer ") => {
+            let token = &header[7..];
+
+            // Verify against api_keys table
+            let is_valid = match sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM api_keys WHERE token = $1"
+            )
+            .bind(token)
+            .fetch_one(&state.db)
+            .await
+            {
+                Ok(count) => count > 0,
+                Err(e) => {
+                    tracing::error!("Database error checking API key: {}", e);
+                    false
+                }
+            };
+
+            if is_valid {
+                Ok(next.run(request).await)
+            } else {
+                tracing::warn!("API Key Auth failed: invalid token");
+                Err(StatusCode::UNAUTHORIZED)
+            }
+        }
+        _ => {
+            tracing::warn!("API Key Auth failed: missing or malformed Authorization header");
+            Err(StatusCode::UNAUTHORIZED)
+        }
+    }
+}

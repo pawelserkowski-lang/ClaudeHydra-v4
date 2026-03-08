@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS api_keys (
+    id UUID PRIMARY KEY,
+    token VARCHAR NOT NULL UNIQUE,
+    name VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);

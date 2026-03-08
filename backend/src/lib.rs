@@ -232,8 +232,6 @@ pub fn create_router(state: AppState) -> Router {
     // ── Protected: other routes — 120 req/min ───────────────────────
     let other_routes = Router::new()
         .route("/api/system/stats", get(handlers::system_stats))
-        .route("/api/system/metrics", get(handlers::system_metrics))
-        .route("/api/system/audit", get(handlers::system_audit))
         // Admin — hot-reload API keys
         .route("/api/admin/rotate-key", post(handlers::rotate_key))
         // Service tokens (Fly.io PAT, etc.) — protected
@@ -339,6 +337,21 @@ pub fn create_router(state: AppState) -> Router {
             auth::require_auth,
         ));
 
+    let rl_system = GovernorConfigBuilder::default()
+        .per_millisecond(500)
+        .burst_size(120)
+        .finish()
+        .expect("rate limiter config: system");
+
+    let api_key_routes = Router::new()
+        .route("/api/system/metrics", get(handlers::system_metrics))
+        .route("/api/system/audit", get(handlers::system_audit))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_api_key_auth,
+        ))
+        .layer(GovernorLayer::new(rl_system));
+
     // ── Metrics endpoint (public, no auth) ─────────────────────────
     let metrics = Router::new().route("/api/metrics", get(metrics_handler));
 
@@ -354,6 +367,7 @@ pub fn create_router(state: AppState) -> Router {
 
     public
         .merge(protected)
+        .merge(api_key_routes)
         .merge(ws_routes)
         .merge(metrics)
         .merge(v1_public)
