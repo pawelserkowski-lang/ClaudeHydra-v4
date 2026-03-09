@@ -8,7 +8,10 @@
 export PATH="./node_modules/.bin:$PATH"
 
 # Run lint-staged on staged frontend files
-npx lint-staged
+# --no-stash: workaround for lint-staged bug where `git stash create` returns
+# empty string when there are no unstaged changes, causing `git rev-parse --short ""`
+# to fail with "fatal: Needed a single revision" (lint-staged v16.3.2)
+npx lint-staged --no-stash
 if [ $? -ne 0 ]; then
   echo "lint-staged failed. Fix errors before committing."
   exit 1
