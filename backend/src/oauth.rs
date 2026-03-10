@@ -168,10 +168,13 @@ pub async fn auth_login(State(state): State<AppState>) -> Json<Value> {
         let mut states = state.oauth_pkce.write().await;
         // Prune expired entries (>10 min old)
         states.retain(|_, pkce| pkce.created_at.elapsed() < crate::state::OAUTH_STATE_TTL);
-        states.insert(oauth_state.clone(), crate::state::OAuthPkceState {
-            code_verifier,
-            created_at: tokio::time::Instant::now(),
-        });
+        states.insert(
+            oauth_state.clone(),
+            crate::state::OAuthPkceState {
+                code_verifier,
+                created_at: tokio::time::Instant::now(),
+            },
+        );
     }
 
     let mut auth_url =

@@ -136,10 +136,13 @@ pub async fn google_auth_login(
         let mut states = state.google_oauth_pkce.write().await;
         // Prune expired entries (>10 min old)
         states.retain(|_, pkce| pkce.created_at.elapsed() < crate::state::OAUTH_STATE_TTL);
-        states.insert(oauth_state.clone(), crate::state::OAuthPkceState {
-            code_verifier,
-            created_at: tokio::time::Instant::now(),
-        });
+        states.insert(
+            oauth_state.clone(),
+            crate::state::OAuthPkceState {
+                code_verifier,
+                created_at: tokio::time::Instant::now(),
+            },
+        );
     }
 
     let mut auth_url = url::Url::parse(GOOGLE_AUTHORIZE_URL)

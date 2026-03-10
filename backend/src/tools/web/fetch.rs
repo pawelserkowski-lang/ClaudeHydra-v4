@@ -150,25 +150,16 @@ async fn resolve_and_validate_dns(host: &str, port: u16) -> Result<(), String> {
                     || v4.is_unspecified()
                     || (v4.octets()[0] == 169 && v4.octets()[1] == 254)
                 {
-                    return Err(format!(
-                        "Blocked: '{}' resolves to private IP {}",
-                        host, ip
-                    ));
+                    return Err(format!("Blocked: '{}' resolves to private IP {}", host, ip));
                 }
             }
             std::net::IpAddr::V6(v6) => {
                 if v6.is_loopback() || v6.is_unspecified() {
-                    return Err(format!(
-                        "Blocked: '{}' resolves to private IP {}",
-                        host, ip
-                    ));
+                    return Err(format!("Blocked: '{}' resolves to private IP {}", host, ip));
                 }
                 let seg = v6.segments();
                 if (seg[0] & 0xfe00) == 0xfc00 || (seg[0] & 0xffc0) == 0xfe80 {
-                    return Err(format!(
-                        "Blocked: '{}' resolves to private IP {}",
-                        host, ip
-                    ));
+                    return Err(format!("Blocked: '{}' resolves to private IP {}", host, ip));
                 }
                 if let Some(v4) = v6.to_ipv4_mapped() {
                     if v4.is_loopback()

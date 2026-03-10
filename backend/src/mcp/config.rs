@@ -17,8 +17,7 @@ use sqlx::PgPool;
 /// and Fly.io .internal addresses.
 /// In dev mode (no AUTH_SECRET): only blocks cloud metadata and .internal addresses.
 pub fn validate_mcp_url(url: &str, is_prod: bool) -> Result<(), String> {
-    let parsed =
-        url::Url::parse(url).map_err(|e| format!("Invalid MCP server URL: {}", e))?;
+    let parsed = url::Url::parse(url).map_err(|e| format!("Invalid MCP server URL: {}", e))?;
 
     let scheme = parsed.scheme();
     if scheme != "http" && scheme != "https" {
@@ -32,9 +31,7 @@ pub fn validate_mcp_url(url: &str, is_prod: bool) -> Result<(), String> {
     let h = host.to_lowercase();
 
     // Always block: cloud metadata and Fly.io internal network
-    if h == "metadata.google.internal"
-        || h.ends_with(".internal")
-        || h.contains("169.254.169.254")
+    if h == "metadata.google.internal" || h.ends_with(".internal") || h.contains("169.254.169.254")
     {
         return Err(format!(
             "Blocked: MCP URL points to internal/metadata host '{}'",
@@ -46,10 +43,7 @@ pub fn validate_mcp_url(url: &str, is_prod: bool) -> Result<(), String> {
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         if let std::net::IpAddr::V4(v4) = ip {
             if v4.octets()[0] == 169 && v4.octets()[1] == 254 {
-                return Err(format!(
-                    "Blocked: MCP URL points to link-local IP {}",
-                    ip
-                ));
+                return Err(format!("Blocked: MCP URL points to link-local IP {}", ip));
             }
         }
     }
@@ -362,19 +356,37 @@ pub async fn upsert_discovered_tools(
 /// Allowed base commands for MCP stdio transport.
 /// Only well-known package runners and interpreters are permitted.
 const ALLOWED_STDIO_COMMANDS: &[&str] = &[
-    "npx", "npx.cmd", "node", "node.exe",
-    "python", "python.exe", "python3", "python3.exe",
-    "uvx", "uvx.exe", "uv", "uv.exe",
-    "deno", "deno.exe",
-    "bun", "bun.exe",
+    "npx",
+    "npx.cmd",
+    "node",
+    "node.exe",
+    "python",
+    "python.exe",
+    "python3",
+    "python3.exe",
+    "uvx",
+    "uvx.exe",
+    "uv",
+    "uv.exe",
+    "deno",
+    "deno.exe",
+    "bun",
+    "bun.exe",
 ];
 
 /// Environment variables that must not be overridden by MCP server config.
 const BLOCKED_ENV_VARS: &[&str] = &[
-    "PATH", "Path", "PATHEXT",
-    "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
-    "COMSPEC", "SHELL",
-    "HOME", "USERPROFILE", "SYSTEMROOT",
+    "PATH",
+    "Path",
+    "PATHEXT",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "DYLD_INSERT_LIBRARIES",
+    "COMSPEC",
+    "SHELL",
+    "HOME",
+    "USERPROFILE",
+    "SYSTEMROOT",
 ];
 
 /// Validate stdio transport config: command must be in allowlist,
@@ -479,7 +491,8 @@ pub async fn update_server_handler(
     Json(req): Json<UpdateMcpServerRequest>,
 ) -> Result<Json<Value>, StatusCode> {
     // Validate stdio allowlist: check effective transport + command after merge
-    if req.transport.as_deref() == Some("stdio") || req.command.is_some() || req.env_vars.is_some() {
+    if req.transport.as_deref() == Some("stdio") || req.command.is_some() || req.env_vars.is_some()
+    {
         let current = get_by_id(&state.db, &id)
             .await
             .map_err(|e| {

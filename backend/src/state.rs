@@ -285,6 +285,8 @@ pub struct AppState {
     pub browser_proxy_history: Arc<crate::browser_proxy::ProxyHealthHistory>,
     /// Broadcast channel for real-time A2A delegation updates.
     pub a2a_task_tx: tokio::sync::broadcast::Sender<serde_json::Value>,
+    /// Semaphore limiting concurrent A2A delegations (max 5 system-wide).
+    pub a2a_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 // ── Shared: readiness helpers ───────────────────────────────────────────────
@@ -371,6 +373,7 @@ impl AppState {
             )),
             browser_proxy_history: Arc::new(crate::browser_proxy::ProxyHealthHistory::new(50)),
             a2a_task_tx,
+            a2a_semaphore: Arc::new(tokio::sync::Semaphore::new(5)),
         }
     }
 
@@ -417,6 +420,7 @@ impl AppState {
             )),
             browser_proxy_history: Arc::new(crate::browser_proxy::ProxyHealthHistory::new(50)),
             a2a_task_tx,
+            a2a_semaphore: Arc::new(tokio::sync::Semaphore::new(5)),
         }
     }
 }

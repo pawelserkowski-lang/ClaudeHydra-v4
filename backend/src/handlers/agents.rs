@@ -76,9 +76,10 @@ pub async fn list_delegations(
     .fetch_all(&state.db)
     .await
     .map_err(|e| {
+        tracing::error!("list_delegations DB error: {}", e);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("DB error: {}", e) })),
+            Json(json!({ "error": "Failed to load delegations" })),
         )
     })?;
 

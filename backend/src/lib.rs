@@ -667,6 +667,15 @@ pub fn create_test_router(state: AppState) -> Router {
 
 // ── Prometheus-compatible metrics endpoint ───────────────────────────────────
 
+/// Sanitize a string for use as a Prometheus label value.
+/// Only allows alphanumeric, underscore, hyphen, dot. Truncates to 64 chars.
+fn sanitize_prom_label(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-' || *c == '.')
+        .take(64)
+        .collect()
+}
+
 async fn metrics_handler(State(state): State<AppState>) -> String {
     let snapshot = state.system_monitor.read().await;
     let uptime = state.start_time.elapsed().as_secs();
@@ -703,10 +712,11 @@ async fn metrics_handler(State(state): State<AppState>) -> String {
              # TYPE a2a_delegation_duration_by_agent gauge\n",
         );
         for (agent, avg_ms, count) in &per_agent {
+            let safe_agent = sanitize_prom_label(agent);
             agent_lines.push_str(&format!(
                 "a2a_delegation_duration_by_agent{{agent=\"{}\"}} {:.1}\n\
                  a2a_delegation_count_by_agent{{agent=\"{}\"}} {}\n",
-                agent, avg_ms, agent, count
+                safe_agent, avg_ms, safe_agent, count
             ));
         }
     }
