@@ -68,7 +68,8 @@ pub async fn generate_image(
                     tokio::time::sleep(Duration::from_secs(5)).await;
                     continue;
                 }
-                return Err(format!("Browser proxy unavailable ({}): {}", url, e));
+                tracing::error!("browser_proxy[{}]: request failed: {}", context, e);
+                return Err("Browser proxy request failed".to_string());
             }
         };
 
@@ -86,7 +87,8 @@ pub async fn generate_image(
                     tokio::time::sleep(Duration::from_secs(5)).await;
                     continue;
                 }
-                return Err(format!("Browser proxy response read error: {}", e));
+                tracing::error!("browser_proxy[{}]: response read error: {}", context, e);
+                return Err("Browser proxy response read failed".to_string());
             }
         };
 
@@ -105,15 +107,23 @@ pub async fn generate_image(
         if !status.is_success() {
             // UTF-8 safe truncation (no panic on multi-byte chars)
             let preview: String = resp_text.chars().take(300).collect();
-            return Err(format!(
-                "Browser proxy returned {}: {}",
+            tracing::error!(
+                "browser_proxy[{}]: HTTP {} response: {}",
+                context,
                 status.as_u16(),
                 preview
+            );
+            return Err(format!(
+                "Browser proxy returned HTTP {}",
+                status.as_u16()
             ));
         }
 
         let resp_json: serde_json::Value = serde_json::from_str(&resp_text)
-            .map_err(|e| format!("Browser proxy invalid JSON: {}", e))?;
+            .map_err(|e| {
+                tracing::error!("browser_proxy[{}]: invalid JSON response: {}", context, e);
+                "Browser proxy returned invalid response".to_string()
+            })?;
 
         let image_b64 = resp_json["image_base64"]
             .as_str()
@@ -265,14 +275,17 @@ pub(crate) async fn detailed_health_check(client: &reqwest::Client) -> BrowserPr
                 }
             }
         }
-        Err(e) => BrowserProxyStatus {
-            configured: true,
-            reachable: false,
-            ready: false,
-            last_check_epoch: now,
-            last_error: Some(format!("{}", e)),
-            ..Default::default()
-        },
+        Err(e) => {
+            tracing::error!("browser_proxy health check failed: {}", e);
+            BrowserProxyStatus {
+                configured: true,
+                reachable: false,
+                ready: false,
+                last_check_epoch: now,
+                last_error: Some("Health check request failed".to_string()),
+                ..Default::default()
+            }
+        }
     }
 }
 
@@ -318,7 +331,7 @@ pub async fn proxy_status(State(state): State<crate::state::AppState>) -> Json<s
         None => None,
     };
 
-    let mut result = json!({ "configured": true, "proxy_url": base });
+    let mut result = json!({ "configured": true });
 
     if let Ok(cached) = state.browser_proxy_status.try_read() {
         result["watchdog"] = json!({

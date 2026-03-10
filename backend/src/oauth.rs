@@ -295,9 +295,10 @@ pub async fn auth_callback(
     .execute(&state.db)
     .await
     .map_err(|e| {
+        tracing::error!("oauth: failed to store tokens: {}", e);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("Failed to store tokens: {}", e) })),
+            Json(json!({ "error": "Authentication failed" })),
         )
     })?;
 

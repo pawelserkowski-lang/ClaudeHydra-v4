@@ -55,7 +55,8 @@ pub async fn github_auth_status(State(state): State<AppState>) -> Json<Value> {
 pub async fn github_auth_login(State(state): State<AppState>) -> Json<Value> {
     let client_id = std::env::var("GITHUB_CLIENT_ID").unwrap_or_default();
     if client_id.is_empty() {
-        return Json(json!({ "error": "GITHUB_CLIENT_ID not configured" }));
+        tracing::error!("github oauth: GITHUB_CLIENT_ID not configured");
+        return Json(json!({ "error": "GitHub authentication not configured" }));
     }
 
     // Generate a random state parameter for CSRF protection
@@ -117,9 +118,10 @@ pub async fn github_auth_callback(
     let client_secret = std::env::var("GITHUB_CLIENT_SECRET").unwrap_or_default();
 
     if client_id.is_empty() || client_secret.is_empty() {
+        tracing::error!("github oauth: GITHUB_CLIENT_ID or GITHUB_CLIENT_SECRET not configured");
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "GITHUB_CLIENT_ID or GITHUB_CLIENT_SECRET not configured" })),
+            Json(json!({ "error": "Authentication failed" })),
         ));
     }
 

@@ -52,7 +52,8 @@ pub async fn vercel_auth_status(State(state): State<AppState>) -> Json<Value> {
 pub async fn vercel_auth_login(State(state): State<AppState>) -> Json<Value> {
     let client_id = std::env::var("VERCEL_CLIENT_ID").unwrap_or_default();
     if client_id.is_empty() {
-        return Json(json!({ "error": "VERCEL_CLIENT_ID not configured" }));
+        tracing::error!("vercel oauth: VERCEL_CLIENT_ID not configured");
+        return Json(json!({ "error": "Vercel authentication not configured" }));
     }
 
     let redirect_uri = std::env::var("VERCEL_REDIRECT_URI")
@@ -119,9 +120,10 @@ pub async fn vercel_auth_callback(
         .unwrap_or_else(|_| "http://localhost:5199/api/auth/vercel/callback".to_string());
 
     if client_id.is_empty() || client_secret.is_empty() {
+        tracing::error!("vercel oauth: VERCEL_CLIENT_ID or VERCEL_CLIENT_SECRET not configured");
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "VERCEL_CLIENT_ID or VERCEL_CLIENT_SECRET not configured" })),
+            Json(json!({ "error": "Authentication failed" })),
         ));
     }
 
