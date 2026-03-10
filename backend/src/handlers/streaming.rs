@@ -29,6 +29,69 @@ use super::{
     truncate_for_context_with_limit,
 };
 
+/// Maximum number of messages in the conversation Vec during agentic tool loops.
+/// Keeps system prompt + initial user message (first 2) + last (MAX - 2) messages.
+/// 80 messages allows ~40 tool iterations before trimming kicks in.
+const MAX_CONVERSATION_MESSAGES: usize = 80;
+
+/// Trim conversation to stay within MAX_CONVERSATION_MESSAGES.
+/// Preserves the first 2 messages (system context + initial user prompt)
+/// and keeps the most recent messages, discarding middle entries.
+fn trim_conversation(conversation: &mut Vec<Value>) {
+    if conversation.len() <= MAX_CONVERSATION_MESSAGES {
+        return;
+    }
+    let keep_head = 2.min(conversation.len());
+    let keep_tail = MAX_CONVERSATION_MESSAGES.saturating_sub(keep_head);
+    let tail_start = conversation.len().saturating_sub(keep_tail);
+
+    if tail_start <= keep_head {
+        // Nothing to trim — head and tail overlap
+        return;
+    }
+
+    let trimmed_count = tail_start - keep_head;
+    tracing::info!(
+        "Trimming conversation: {} messages total, removing {} from middle (keeping first {} + last {})",
+        conversation.len(),
+        trimmed_count,
+        keep_head,
+        keep_tail,
+    );
+
+    // Insert a marker so the model knows context was trimmed
+    let tail: Vec<Value> = conversation.drain(tail_start..).collect();
+    conversation.truncate(keep_head);
+    conversation.push(json!({
+        "role": "user",
+        "content": format!(
+            "[SYSTEM: {} earlier messages trimmed for context efficiency. Focus on the most recent context.]",
+            trimmed_count
+        )
+    }));
+    conversation.extend(tail);
+}
+
+/// Sanitize raw Anthropic API error text before sending to the frontend.
+/// Strips internal details (model IDs, request IDs, full JSON bodies) and
+/// returns a safe, user-facing message.
+fn sanitize_api_error(raw: &str) -> String {
+    // Try to parse as JSON and extract a human-readable message
+    if let Ok(parsed) = serde_json::from_str::<Value>(raw)
+        && let Some(msg) = parsed
+            .pointer("/error/message")
+            .or_else(|| parsed.get("message"))
+            .or_else(|| parsed.get("error"))
+            .and_then(|v| v.as_str())
+    {
+        let safe: String = msg.chars().take(200).collect();
+        return format!("API error: {}", safe);
+    }
+    // Fallback: truncate raw text, strip anything that looks like a key/token
+    let truncated: String = raw.chars().take(200).collect();
+    format!("API error: {}", truncated)
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //  Gemini hybrid streaming
 // ═══════════════════════════════════════════════════════════════════════
@@ -558,10 +621,11 @@ async fn claude_chat_stream_with_tools(
                     iteration,
                     &truncate_for_context_with_limit(&err_text, 500)
                 );
+                let safe_error = sanitize_api_error(&err_text);
                 let _ = tx
                     .send(
                         serde_json::to_string(&json!({
-                            "token": format!("\n[Anthropic error: {}]", err_text),
+                            "token": format!("\n[{}]", safe_error),
                             "done": true, "model": &model, "total_tokens": 0,
                         }))
                         .unwrap_or_default(),
@@ -793,6 +857,9 @@ async fn claude_chat_stream_with_tools(
                 }
 
                 conversation.push(json!({ "role": "user", "content": tool_results }));
+
+                // Sliding window: trim conversation to prevent unbounded growth
+                trim_conversation(&mut conversation);
 
                 // Iteration nudges
                 if iteration >= 3 {
@@ -1297,10 +1364,11 @@ async fn execute_streaming_ws(
 
         if !resp.status().is_success() {
             let err_text = resp.text().await.unwrap_or_default();
+            let safe_error = sanitize_api_error(&err_text);
             ws_send(
                 sender,
                 &WsServerMessage::Error {
-                    message: err_text,
+                    message: safe_error,
                     code: Some("ANTHROPIC_ERROR".to_string()),
                 },
             )
@@ -1497,10 +1565,11 @@ async fn execute_streaming_ws(
                 iteration,
                 &truncate_for_context_with_limit(&err_text, 500)
             );
+            let safe_error = sanitize_api_error(&err_text);
             ws_send(
                 sender,
                 &WsServerMessage::Error {
-                    message: err_text,
+                    message: safe_error,
                     code: Some("ANTHROPIC_ERROR".to_string()),
                 },
             )
@@ -1786,6 +1855,9 @@ async fn execute_streaming_ws(
             }
 
             conversation.push(json!({ "role": "user", "content": tool_results }));
+
+            // Sliding window: trim conversation to prevent unbounded growth
+            trim_conversation(&mut conversation);
 
             // Iteration nudges
             if iteration >= 3 {
@@ -2143,12 +2215,9 @@ pub(crate) async fn execute_agent_call(
 
         if !resp.status().is_success() {
             let err = resp.text().await.unwrap_or_default();
+            let safe_err = sanitize_api_error(&err);
             return (
-                format!(
-                    "[{} API error: {}]",
-                    agent_display_name,
-                    &truncate_for_context_with_limit(&err, 300)
-                ),
+                format!("[{} {}]", agent_display_name, safe_err),
                 true,
             );
         }
@@ -2237,6 +2306,9 @@ pub(crate) async fn execute_agent_call(
             }
 
             conversation.push(json!({ "role": "user", "content": tool_results }));
+
+            // Sliding window: trim conversation to prevent unbounded growth
+            trim_conversation(&mut conversation);
 
             if iter >= 6 {
                 conversation.push(json!({
