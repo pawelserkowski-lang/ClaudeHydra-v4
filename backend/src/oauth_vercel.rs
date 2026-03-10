@@ -62,8 +62,10 @@ pub async fn vercel_auth_login(State(state): State<AppState>) -> Json<Value> {
     let oauth_state = random_base64url(32);
 
     {
-        let mut stored = state.vercel_oauth_state.write().await;
-        *stored = Some(oauth_state.clone());
+        let mut states = state.vercel_oauth_states.write().await;
+        // Prune expired entries (>10 min old)
+        states.retain(|_, created| created.elapsed() < crate::state::OAUTH_STATE_TTL);
+        states.insert(oauth_state.clone(), tokio::time::Instant::now());
     }
 
     let mut auth_url = url::Url::parse(VERCEL_AUTHORIZE_URL)
@@ -91,23 +93,24 @@ pub async fn vercel_auth_callback(
     State(state): State<AppState>,
     Json(req): Json<VercelCallbackRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    // Verify state
+    // Verify state — remove() validates AND consumes atomically
     {
-        let stored = state.vercel_oauth_state.read().await;
-        match stored.as_ref() {
-            Some(s) if *s == req.state => {}
-            _ => {
+        let mut states = state.vercel_oauth_states.write().await;
+        match states.remove(&req.state) {
+            Some(created) if created.elapsed() < crate::state::OAUTH_STATE_TTL => {}
+            Some(_) => {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "OAuth state expired" })),
+                ));
+            }
+            None => {
                 return Err((
                     StatusCode::BAD_REQUEST,
                     Json(json!({ "error": "Invalid or expired OAuth state" })),
                 ));
             }
         }
-    }
-
-    // Clear OAuth state immediately after validation to prevent replay attacks
-    {
-        *state.vercel_oauth_state.write().await = None;
     }
 
     let client_id = std::env::var("VERCEL_CLIENT_ID").unwrap_or_default();

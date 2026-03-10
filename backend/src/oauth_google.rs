@@ -133,10 +133,12 @@ pub async fn google_auth_login(
     let oauth_state = random_base64url(32);
 
     {
-        let mut pkce = state.google_oauth_pkce.write().await;
-        *pkce = Some(crate::state::OAuthPkceState {
+        let mut states = state.google_oauth_pkce.write().await;
+        // Prune expired entries (>10 min old)
+        states.retain(|_, pkce| pkce.created_at.elapsed() < crate::state::OAUTH_STATE_TTL);
+        states.insert(oauth_state.clone(), crate::state::OAuthPkceState {
             code_verifier,
-            state: oauth_state.clone(),
+            created_at: tokio::time::Instant::now(),
         });
     }
 
@@ -195,12 +197,22 @@ pub async fn google_redirect(
         }
     };
 
-    // Verify PKCE state
+    // Verify PKCE state — remove() validates AND consumes atomically
     let code_verifier = {
-        let pkce = state.google_oauth_pkce.read().await;
-        match pkce.as_ref() {
-            Some(p) if p.state == oauth_state => p.code_verifier.clone(),
-            _ => {
+        let mut states = state.google_oauth_pkce.write().await;
+        match states.remove(&oauth_state) {
+            Some(pkce) if pkce.created_at.elapsed() < crate::state::OAUTH_STATE_TTL => {
+                pkce.code_verifier
+            }
+            Some(_) => {
+                return Html(
+                    r#"<!DOCTYPE html><html><head><title>Auth Error</title></head>
+                    <body style="font-family:monospace;background:#0a0a0a;color:#ff4444;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+                    <div style="text-align:center"><h2>Expired State</h2><p>OAuth state expired. Please try again.</p></div>
+                    </body></html>"#.to_string(),
+                );
+            }
+            None => {
                 return Html(
                     r#"<!DOCTYPE html><html><head><title>Auth Error</title></head>
                     <body style="font-family:monospace;background:#0a0a0a;color:#ff4444;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
@@ -300,8 +312,7 @@ pub async fn google_redirect(
         return Html("Failed to store tokens".to_string());
     }
 
-    // Clear PKCE state and reset OAuth validity flag
-    *state.google_oauth_pkce.write().await = None;
+    // PKCE state already consumed by remove() above — just reset OAuth validity flag
     mark_oauth_gemini_valid(&state);
 
     tracing::info!("Google OAuth login successful for {}", user_email);

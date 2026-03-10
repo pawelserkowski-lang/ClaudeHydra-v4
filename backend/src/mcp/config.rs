@@ -9,6 +9,107 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 
+// ── SSRF URL validation ──────────────────────────────────────────────────
+
+/// Validate an MCP server URL to prevent SSRF attacks.
+///
+/// In production (AUTH_SECRET set): blocks localhost, private IPs, cloud metadata,
+/// and Fly.io .internal addresses.
+/// In dev mode (no AUTH_SECRET): only blocks cloud metadata and .internal addresses.
+pub fn validate_mcp_url(url: &str, is_prod: bool) -> Result<(), String> {
+    let parsed =
+        url::Url::parse(url).map_err(|e| format!("Invalid MCP server URL: {}", e))?;
+
+    let scheme = parsed.scheme();
+    if scheme != "http" && scheme != "https" {
+        return Err(format!("Only http/https schemes allowed, got: {}", scheme));
+    }
+
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "MCP server URL has no host".to_string())?;
+
+    let h = host.to_lowercase();
+
+    // Always block: cloud metadata and Fly.io internal network
+    if h == "metadata.google.internal"
+        || h.ends_with(".internal")
+        || h.contains("169.254.169.254")
+    {
+        return Err(format!(
+            "Blocked: MCP URL points to internal/metadata host '{}'",
+            host
+        ));
+    }
+
+    // Block IP literals pointing to link-local (metadata) range — always
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if let std::net::IpAddr::V4(v4) = ip {
+            if v4.octets()[0] == 169 && v4.octets()[1] == 254 {
+                return Err(format!(
+                    "Blocked: MCP URL points to link-local IP {}",
+                    ip
+                ));
+            }
+        }
+    }
+
+    // Production-only: also block localhost and private IPs
+    if is_prod {
+        if h == "localhost" || h.ends_with(".local") || h.ends_with(".localhost") {
+            return Err(format!(
+                "Blocked: MCP URL points to local host '{}' (production mode)",
+                host
+            ));
+        }
+
+        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            match ip {
+                std::net::IpAddr::V4(v4) => {
+                    if v4.is_loopback()
+                        || v4.is_private()
+                        || v4.is_link_local()
+                        || v4.is_broadcast()
+                        || v4.is_unspecified()
+                    {
+                        return Err(format!(
+                            "Blocked: MCP URL points to private/local IP {} (production mode)",
+                            ip
+                        ));
+                    }
+                }
+                std::net::IpAddr::V6(v6) => {
+                    if v6.is_loopback() || v6.is_unspecified() {
+                        return Err(format!(
+                            "Blocked: MCP URL points to private IP {} (production mode)",
+                            ip
+                        ));
+                    }
+                    let seg = v6.segments();
+                    // ULA (fc00::/7) and link-local (fe80::/10)
+                    if (seg[0] & 0xfe00) == 0xfc00 || (seg[0] & 0xffc0) == 0xfe80 {
+                        return Err(format!(
+                            "Blocked: MCP URL points to private IP {} (production mode)",
+                            ip
+                        ));
+                    }
+                    // IPv4-mapped addresses (::ffff:x.x.x.x)
+                    if let Some(v4) = v6.to_ipv4_mapped() {
+                        if v4.is_loopback() || v4.is_private() || v4.is_link_local() {
+                            return Err(format!(
+                                "Blocked: MCP URL resolves to private IPv4-mapped IP {} (production mode)",
+                                ip
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 // ── Models ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -352,6 +453,16 @@ pub async fn create_server_handler(
             }
         }
     }
+    // SSRF validation for HTTP transport URLs
+    if req.transport == "http" {
+        if let Some(ref url) = req.url {
+            let is_prod = state.auth_secret.is_some();
+            if let Err(msg) = validate_mcp_url(url, is_prod) {
+                tracing::warn!("mcp: create_server SSRF rejected: {}", msg);
+                return Err(StatusCode::BAD_REQUEST);
+            }
+        }
+    }
 
     let server = insert(&state.db, &req).await.map_err(|e| {
         tracing::error!("mcp: create_server: {}", e);
@@ -384,6 +495,19 @@ pub async fn update_server_handler(
                     tracing::warn!("mcp: update_server rejected: {}", msg);
                     return Err(StatusCode::BAD_REQUEST);
                 }
+            }
+        }
+    }
+
+    // SSRF validation for HTTP transport URLs on update
+    if let Some(ref url) = req.url {
+        let needs_url_check = req.transport.as_deref() == Some("http")
+            || (req.transport.is_none() && req.url.is_some());
+        if needs_url_check {
+            let is_prod = state.auth_secret.is_some();
+            if let Err(msg) = validate_mcp_url(url, is_prod) {
+                tracing::warn!("mcp: update_server SSRF rejected: {}", msg);
+                return Err(StatusCode::BAD_REQUEST);
             }
         }
     }

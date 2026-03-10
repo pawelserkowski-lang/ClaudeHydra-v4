@@ -109,6 +109,15 @@ impl McpClientManager {
                     .as_deref()
                     .ok_or_else(|| anyhow::anyhow!("HTTP transport requires url"))?;
 
+                // Defense-in-depth: SSRF validation before making any HTTP request
+                let is_prod = std::env::var("AUTH_SECRET")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+                    .is_some();
+                if let Err(msg) = super::config::validate_mcp_url(url, is_prod) {
+                    return Err(anyhow::anyhow!("SSRF blocked: {}", msg));
+                }
+
                 let transport = McpTransport::Http {
                     url: url.to_string(),
                     auth_token: config.auth_token.clone(),

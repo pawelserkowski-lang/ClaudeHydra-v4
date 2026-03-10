@@ -165,10 +165,12 @@ pub async fn auth_login(State(state): State<AppState>) -> Json<Value> {
     let oauth_state = random_base64url(32);
 
     {
-        let mut pkce = state.oauth_pkce.write().await;
-        *pkce = Some(crate::state::OAuthPkceState {
+        let mut states = state.oauth_pkce.write().await;
+        // Prune expired entries (>10 min old)
+        states.retain(|_, pkce| pkce.created_at.elapsed() < crate::state::OAUTH_STATE_TTL);
+        states.insert(oauth_state.clone(), crate::state::OAuthPkceState {
             code_verifier,
-            state: oauth_state.clone(),
+            created_at: tokio::time::Instant::now(),
         });
     }
 
@@ -202,12 +204,20 @@ pub async fn auth_callback(
     State(state): State<AppState>,
     Json(req): Json<AuthCallbackRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    // Verify PKCE state matches
+    // Verify PKCE state — remove() validates AND consumes atomically
     let code_verifier = {
-        let pkce = state.oauth_pkce.read().await;
-        match pkce.as_ref() {
-            Some(p) if p.state == req.state => p.code_verifier.clone(),
-            _ => {
+        let mut states = state.oauth_pkce.write().await;
+        match states.remove(&req.state) {
+            Some(pkce) if pkce.created_at.elapsed() < crate::state::OAUTH_STATE_TTL => {
+                pkce.code_verifier
+            }
+            Some(_) => {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "OAuth state expired" })),
+                ));
+            }
+            None => {
                 return Err((
                     StatusCode::BAD_REQUEST,
                     Json(json!({ "error": "Invalid or expired OAuth state" })),
@@ -288,10 +298,7 @@ pub async fn auth_callback(
         )
     })?;
 
-    // Clear PKCE state
-    {
-        *state.oauth_pkce.write().await = None;
-    }
+    // PKCE state already consumed by remove() above
 
     tracing::info!("OAuth login successful, token expires at {}", expires_at);
 
