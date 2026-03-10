@@ -20,7 +20,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --no-frozen-lockfile --ignore-workspace
       - name: Biome check
         run: npx biome check --diagnostic-level=error src/
       - name: TypeScript check
