@@ -1,14 +1,13 @@
+// src/features/chat/components/AgentActivityPanel.tsx
 /**
  * AgentActivityPanel — Live agent activity feed
  * ================================================
- * Shows real-time tool calls (in-progress/completed) and execution
- * metadata during WebSocket streaming. Collapses when idle.
- *
- * Ported from GeminiHydra — Jaskier Shared Pattern.
+ * Shows real-time plan steps, tool calls (in-progress/completed),
+ * and execution metadata during streaming. Collapses when idle.
  */
 
 import { cn } from '@jaskier/ui';
-import { CheckCircle2, ChevronDown, ChevronUp, Cog, Loader2, Wrench, XCircle, Zap } from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronUp, Cog, Loader2, Target, Wrench, XCircle, Zap } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -18,7 +17,7 @@ import { useViewTheme } from '@/shared/hooks/useViewTheme';
 // TYPES
 // ============================================================================
 
-interface ToolActivity {
+export interface ToolActivity {
   name: string;
   args?: unknown;
   iteration: number;
@@ -47,6 +46,28 @@ export const EMPTY_ACTIVITY: AgentActivity = {
 };
 
 // ============================================================================
+// CONFIDENCE HELPERS (#45)
+// ============================================================================
+
+function confidenceColor(confidence: number): string {
+  if (confidence >= 0.7) return 'text-emerald-400';
+  if (confidence >= 0.5) return 'text-amber-400';
+  return 'text-red-400';
+}
+
+function confidenceBgColor(confidence: number): string {
+  if (confidence >= 0.7) return 'bg-emerald-500/20';
+  if (confidence >= 0.5) return 'bg-amber-500/20';
+  return 'bg-red-500/20';
+}
+
+function confidenceLabel(confidence: number, t: (key: string) => string): string {
+  if (confidence >= 0.7) return t('chat.highConfidence');
+  if (confidence >= 0.5) return t('chat.mediumConfidence');
+  return t('chat.lowConfidence');
+}
+
+// ============================================================================
 // COMPONENT
 // ============================================================================
 
@@ -66,18 +87,28 @@ export const AgentActivityPanel = memo<{ activity: AgentActivity }>(({ activity 
   const completedTools = useMemo(() => activity.tools.filter((t) => t.status !== 'running'), [activity.tools]);
   const lastTool = activity.tools[activity.tools.length - 1] ?? null;
 
-  // Memoized tool rows list
+  // Memoized plan steps list (#5)
+  const planStepsList = useMemo(
+    () =>
+      activity.planSteps.map((step, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: plan steps are append-only and have no stable ID
+        <div key={`step-${i}`} className="flex items-start gap-2">
+          <Target size={14} className={cn('mt-0.5 shrink-0', theme.accentText, 'opacity-50')} />
+          <span className={theme.textMuted}>{step}</span>
+        </div>
+      )),
+    [activity.planSteps, theme.accentText, theme.textMuted],
+  );
+
+  // Memoized tool rows list (#5)
   const toolRowsList = useMemo(
     () =>
-      activity.tools.map((tool, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: Tools list is stable/append-only
-        <ToolRow key={`tool-${tool.iteration}-${tool.name}-${i}`} tool={tool} theme={theme} />
-      )),
+      activity.tools.map((tool) => <ToolRow key={`tool-${tool.iteration}-${tool.name}`} tool={tool} theme={theme} />),
     [activity.tools, theme],
   );
 
   // Don't render when there's nothing to show
-  if (!activity.isActive && activity.tools.length === 0) {
+  if (!activity.isActive && activity.tools.length === 0 && activity.planSteps.length === 0) {
     return null;
   }
 
@@ -109,8 +140,23 @@ export const AgentActivityPanel = memo<{ activity: AgentActivity }>(({ activity 
           <Zap size={16} className={theme.accentText} />
         )}
 
-        {/* Model (hidden when collapsed to save space) */}
+        {/* Agent + model (hidden when collapsed to save space) */}
+        {expanded && activity.agent && <span className={cn('font-bold', theme.accentText)}>{activity.agent}</span>}
         {expanded && activity.model && <span className={cn('opacity-50', theme.textMuted)}>· {activity.model}</span>}
+
+        {/* Confidence badge with color coding (#45) */}
+        {activity.confidence !== null && (
+          <span
+            className={cn(
+              'px-2 py-0.5 rounded text-xs font-bold',
+              confidenceBgColor(activity.confidence),
+              confidenceColor(activity.confidence),
+            )}
+            title={confidenceLabel(activity.confidence, t)}
+          >
+            {Math.round(activity.confidence * 100)}%
+          </span>
+        )}
 
         {/* Collapsed: inline last tool preview */}
         {!expanded && lastTool && (
@@ -169,7 +215,10 @@ export const AgentActivityPanel = memo<{ activity: AgentActivity }>(({ activity 
             className="overflow-hidden"
           >
             <div className="px-4 pb-3 space-y-1.5">
-              {/* Tool calls */}
+              {/* Plan steps (memoized #5) */}
+              {activity.planSteps.length > 0 && <div className="space-y-1">{planStepsList}</div>}
+
+              {/* Tool calls (memoized #5) */}
               {activity.tools.length > 0 && <div className="space-y-1 pt-1">{toolRowsList}</div>}
             </div>
           </motion.div>

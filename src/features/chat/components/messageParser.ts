@@ -1,32 +1,50 @@
-interface ContentSegment {
-  type: 'text' | 'tool';
-  name?: string;
+export interface TextSegment {
+  type: 'text';
   content: string;
 }
 
-export function splitToolOutput(content: string): ContentSegment[] {
-  const toolPattern = /\n---\n\*\*(?:🔧 )?Tool:\*\* `([^`]+)`\n```\n([\s\S]*?)\n```\n---\n/g;
-  const segments: ContentSegment[] = [];
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-
-  toolPattern.lastIndex = 0;
-
-  match = toolPattern.exec(content);
-  while (match !== null) {
-    if (match.index > lastIndex) {
-      segments.push({ type: 'text', content: content.slice(lastIndex, match.index) });
-    }
-    segments.push({ type: 'tool', name: match[1] || '', content: match[2] || '' });
-    lastIndex = match.index + match[0].length;
-    match = toolPattern.exec(content);
-  }
-  if (lastIndex < content.length) {
-    segments.push({ type: 'text', content: content.slice(lastIndex) });
-  }
-  return segments;
+export interface ToolSegment {
+  type: 'tool';
+  name: string;
+  content: string;
 }
 
-export function stripParallelHeader(content: string): string {
-  return content.replace(/(?:⚡ )?Parallel execution: \d+ tools\n?/g, '');
+export type MessageSegment = TextSegment | ToolSegment;
+
+export function stripParallelHeader(input: string): string {
+  if (!input) return input;
+  return input.replace(/^(?:⚡\s*)?Parallel execution: \d+ tools(?:\r?\n)?/, '');
+}
+
+export function splitToolOutput(input: string): MessageSegment[] {
+  if (!input) return [];
+
+  const segments: MessageSegment[] = [];
+  const toolRegex = /(?:\n)?---\n\*\*(?:🔧\s*)?Tool:\*\* `([^`]+)`\n```\n([\s\S]*?)\n```\n---(?:\n)?/g;
+
+  let lastIndex = 0;
+  let match: RegExpExecArray | null = toolRegex.exec(input);
+
+  while (match !== null) {
+    const textContent = input.slice(lastIndex, match.index);
+    if (textContent) {
+      segments.push({ type: 'text', content: textContent });
+    }
+
+    segments.push({
+      type: 'tool',
+      name: match[1] || '',
+      content: match[2] || '',
+    });
+
+    lastIndex = match.index + match[0].length;
+    match = toolRegex.exec(input);
+  }
+
+  const remainingText = input.slice(lastIndex);
+  if (remainingText) {
+    segments.push({ type: 'text', content: remainingText });
+  }
+
+  return segments;
 }

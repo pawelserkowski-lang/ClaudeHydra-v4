@@ -1,5 +1,5 @@
-/**
- * AttachmentPreview — Displays file/image attachment chips with remove button.
+﻿/**
+ * AttachmentPreview â€” Displays file/image attachment chips with remove button.
  *
  * Extracted from ChatInput.tsx for reusability and cleaner component boundaries.
  */
@@ -66,7 +66,7 @@ AttachmentChip.displayName = 'AttachmentChip';
 // Component
 // ---------------------------------------------------------------------------
 
-const AttachmentPreview = memo(function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewProps) {
+export const AttachmentPreview = memo(function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewProps) {
   if (attachments.length === 0) return null;
 
   return (
