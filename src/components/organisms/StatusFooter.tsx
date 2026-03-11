@@ -5,7 +5,7 @@
  * ==================================
  * Displays: version, connection status, model tier, CPU%, RAM%,
  * tagline, and live time.
- * Unified with GeminiHydra-v15 StatusFooter layout.
+ * Unified with GeminiHydra StatusFooter layout.
  *
  * Uses `memo()` for render optimization.
  */

@@ -132,7 +132,7 @@ impl McpClientManager {
                         "protocolVersion": "2025-03-26",
                         "capabilities": {},
                         "clientInfo": {
-                            "name": "ClaudeHydra-v4",
+                            "name": "ClaudeHydra",
                             "version": "4.0.0"
                         }
                     }),
@@ -470,7 +470,7 @@ impl McpClientManager {
                     "protocolVersion": "2025-03-26",
                     "capabilities": {},
                     "clientInfo": {
-                        "name": "ClaudeHydra-v4",
+                        "name": "ClaudeHydra",
                         "version": "4.0.0"
                     }
                 }),

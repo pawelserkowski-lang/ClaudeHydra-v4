@@ -8,8 +8,8 @@ Guidelines for contributing to ClaudeHydra v4.
 
 ```bash
 # Clone and install
-git clone <repo-url> ClaudeHydra-v4
-cd ClaudeHydra-v4
+git clone <repo-url> ClaudeHydra
+cd ClaudeHydra
 pnpm install
 
 # Start backend

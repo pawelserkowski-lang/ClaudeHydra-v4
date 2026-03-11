@@ -6,7 +6,7 @@
  * States: online (green), offline (red/gray), pending (yellow), error (red).
  * Size variants: sm, md.
  *
- * ClaudeHydra-v4: Uses CSS variable-based colors (matching GeminiHydra-v15 pattern).
+ * ClaudeHydra: Uses CSS variable-based colors (matching GeminiHydra pattern).
  */
 
 import { cn } from '@jaskier/ui';

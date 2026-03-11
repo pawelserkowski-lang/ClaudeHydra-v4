@@ -1,5 +1,5 @@
 /**
- * Sidebar E2E tests for ClaudeHydra-v4.
+ * Sidebar E2E tests for ClaudeHydra.
  * Verifies sidebar display, collapse/expand, nav items, version,
  * theme toggle, settings button, session management, and chats section.
  */

@@ -1,6 +1,6 @@
 /**
  * TabBar — Browser-style chat tabs for ClaudeHydra v4.
- * Ported from GeminiHydra-v15 TabBar.tsx with store API adaptations.
+ * Ported from GeminiHydra TabBar.tsx with store API adaptations.
  *
  * Supports: switching, closing, pinning, middle-click close, new tab button,
  * message count badges, scroll on overflow, context menu, glass-panel background.

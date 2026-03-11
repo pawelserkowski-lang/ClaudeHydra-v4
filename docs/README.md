@@ -14,8 +14,8 @@ A dual-provider AI chat platform with 12 Witcher-themed autonomous agents, built
 ### 1. Clone and install
 
 ```bash
-git clone <repo-url> ClaudeHydra-v4
-cd ClaudeHydra-v4
+git clone <repo-url> ClaudeHydra
+cd ClaudeHydra
 pnpm install
 ```
 
@@ -104,7 +104,7 @@ Switch between providers in the chat interface or use the Model Selector to pick
 ## Project Structure
 
 ```
-ClaudeHydra-v4/
+ClaudeHydra/
   backend/              # Rust/Axum API server
     src/
       main.rs           # Entry point, server bootstrap

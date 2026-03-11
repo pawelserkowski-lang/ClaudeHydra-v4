@@ -1,5 +1,5 @@
 /**
- * Home view E2E tests for ClaudeHydra-v4.
+ * Home view E2E tests for ClaudeHydra.
  * Verifies the glass card, title, subtitle, badges, and CTA button.
  */
 

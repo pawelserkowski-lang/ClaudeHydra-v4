@@ -15,7 +15,7 @@ use crate::state::AppState;
 // ── Constants ────────────────────────────────────────────────────────────
 
 const MCP_PROTOCOL_VERSION: &str = "2025-03-26";
-const MCP_SERVER_NAME: &str = "ClaudeHydra-v4";
+const MCP_SERVER_NAME: &str = "ClaudeHydra";
 const MCP_SERVER_VERSION: &str = "4.0.0";
 
 /// Per-tool timeout when executing via MCP server endpoint (seconds).

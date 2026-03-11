@@ -1,5 +1,5 @@
 /**
- * Navigation E2E tests for ClaudeHydra-v4.
+ * Navigation E2E tests for ClaudeHydra.
  * Verifies sidebar navigation, logo click, Home CTA routing, and active-nav highlighting.
  */
 

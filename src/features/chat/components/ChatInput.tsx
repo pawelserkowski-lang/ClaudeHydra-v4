@@ -3,7 +3,7 @@
  * and keyboard shortcut support.
  *
  * Ported from ClaudeHydra v3 `OllamaChatView.tsx` inline input area.
- * ClaudeHydra-v4: Extracted as a standalone component for reuse and testing.
+ * ClaudeHydra: Extracted as a standalone component for reuse and testing.
  * Refactored to use @jaskier/ui BaseChatInput.
  */
 

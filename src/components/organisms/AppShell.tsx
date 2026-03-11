@@ -10,7 +10,7 @@
  *  - Content area (children slot)
  *  - StatusFooter (with live system stats)
  *
- * Unified with GeminiHydra-v15 AppShell pattern for StatusFooter props.
+ * Unified with GeminiHydra AppShell pattern for StatusFooter props.
  */
 
 import { cn } from '@jaskier/ui';

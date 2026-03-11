@@ -1,7 +1,7 @@
 /**
  * viewStore — Zustand store for SPA view routing, sidebar, sessions & tabs.
  *
- * v2: Browser-style ChatTab system ported from GeminiHydra-v15.
+ * v2: Browser-style ChatTab system ported from GeminiHydra.
  * Each tab links to a session via sessionId. Supports pin, reorder,
  * context menu close, and per-session streaming isolation.
  * Refactored to use the Slice Pattern for better maintainability.

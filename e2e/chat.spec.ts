@@ -1,5 +1,5 @@
 /**
- * Chat view E2E tests for ClaudeHydra-v4.
+ * Chat view E2E tests for ClaudeHydra.
  * Verifies chat UI elements, offline state indicators, and input controls.
  * Backend is NOT running — chat should display offline status throughout.
  */

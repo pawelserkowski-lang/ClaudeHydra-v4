@@ -1,5 +1,5 @@
 /**
- * Responsive layout E2E tests for ClaudeHydra-v4.
+ * Responsive layout E2E tests for ClaudeHydra.
  * Verifies mobile hamburger/drawer behavior and desktop sidebar
  * across different viewport sizes. Mobile breakpoint: 768px.
  */

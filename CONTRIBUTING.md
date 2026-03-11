@@ -13,8 +13,8 @@ Part of the **Jaskier App Family** — a suite of AI-powered tools sharing code 
 
 ```bash
 # 1. Clone
-git clone https://github.com/EPS-AI-SOLUTIONS/ClaudeHydra-v4.git
-cd ClaudeHydra-v4
+git clone https://github.com/EPS-AI-SOLUTIONS/ClaudeHydra.git
+cd ClaudeHydra
 
 # 2. Frontend
 pnpm install

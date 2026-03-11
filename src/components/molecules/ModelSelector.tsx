@@ -6,7 +6,7 @@
  * Features: search/filter, keyboard navigation, outside-click close.
  * Generic typing for model options.
  *
- * ClaudeHydra-v4: Green Matrix accent with glass-panel from globals.css.
+ * ClaudeHydra: Green Matrix accent with glass-panel from globals.css.
  */
 
 import { cn } from '@jaskier/ui';

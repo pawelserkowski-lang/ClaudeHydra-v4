@@ -8,7 +8,7 @@
  * Uses `hljs` CSS classes for syntax highlighting — works with rehype-highlight
  * when rendered inside react-markdown, and displays cleanly as plain code standalone.
  *
- * ClaudeHydra-v4: Green Matrix accent with glass-panel from globals.css.
+ * ClaudeHydra: Green Matrix accent with glass-panel from globals.css.
  */
 
 import { cn } from '@jaskier/ui';

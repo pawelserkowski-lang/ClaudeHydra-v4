@@ -3,7 +3,7 @@
  * ClaudeHydra v4 - Health Hooks
  * ==============================
  * TanStack Query hooks for health and system stats endpoints.
- * Mirrors GeminiHydra-v15 pattern using shared apiGet client.
+ * Mirrors GeminiHydra pattern using shared apiGet client.
  */
 
 import { useQuery } from '@tanstack/react-query';
