@@ -11,6 +11,7 @@ pub mod oauth_github;
 pub mod oauth_google;
 pub mod oauth_vercel;
 pub mod ocr;
+pub mod rate_limits;
 pub mod service_tokens;
 pub mod state;
 pub mod system_monitor;
@@ -99,6 +100,12 @@ async fn request_id_middleware(
         // Sessions (local overrides with utoipa annotations)
         handlers::get_session,
         handlers::add_session_message,
+        // Tags & search
+        handlers::get_session_tags,
+        handlers::add_session_tags,
+        handlers::delete_session_tag,
+        handlers::search_sessions,
+        handlers::list_all_tags,
         // Model registry
         model_registry::list_models,
         model_registry::refresh_models,
@@ -141,6 +148,9 @@ async fn request_id_middleware(
         model_registry::PinModelRequest,
         // Prompt history
         models::AddPromptRequest,
+        // Tags
+        handlers::tags::AddTagsRequest,
+        handlers::tags::SearchResult,
     )),
     tags(
         (name = "health", description = "Health & readiness endpoints"),
@@ -151,6 +161,7 @@ async fn request_id_middleware(
         (name = "sessions", description = "Chat session management"),
         (name = "models", description = "Dynamic model registry & pinning"),
         (name = "system", description = "System monitoring"),
+        (name = "tags", description = "Session tagging & full-text search"),
     )
 )]
 pub struct ApiDoc;
@@ -326,6 +337,8 @@ fn general_protected_routes() -> Router<AppState> {
             "/api/sessions",
             get(handlers::list_sessions::<AppState>).post(handlers::create_session::<AppState>),
         )
+        // Session search (literal path — precedes {id} wildcard)
+        .route("/api/sessions/search", get(handlers::search_sessions))
         .route(
             "/api/sessions/{id}",
             get(handlers::get_session)
@@ -343,6 +356,17 @@ fn general_protected_routes() -> Router<AppState> {
             "/api/sessions/{id}/messages",
             post(handlers::add_session_message),
         )
+        // Session tags
+        .route(
+            "/api/sessions/{id}/tags",
+            get(handlers::get_session_tags).post(handlers::add_session_tags),
+        )
+        .route(
+            "/api/sessions/{id}/tags/{tag}",
+            delete(handlers::delete_session_tag),
+        )
+        // All tags (global)
+        .route("/api/tags", get(handlers::list_all_tags))
         .route(
             "/api/sessions/{id}/generate-title",
             post(handlers::generate_session_title::<AppState>),
@@ -386,6 +410,18 @@ fn general_protected_routes() -> Router<AppState> {
                 .post(handlers::add_prompt_history::<AppState>)
                 .delete(handlers::clear_prompt_history::<AppState>),
         )
+        // Analytics — agent performance dashboard
+        .route("/api/analytics/tokens", get(handlers::analytics_tokens))
+        .route("/api/analytics/latency", get(handlers::analytics_latency))
+        .route(
+            "/api/analytics/success-rate",
+            get(handlers::analytics_success_rate),
+        )
+        .route(
+            "/api/analytics/top-tools",
+            get(handlers::analytics_top_tools),
+        )
+        .route("/api/analytics/cost", get(handlers::analytics_cost))
 }
 
 /// Routes that require API key authentication (system metrics/audit).
@@ -440,47 +476,87 @@ fn assemble_app(
 /// Build the application router with the given shared state.
 /// Extracted from `main()` so integration tests can construct the app
 /// without binding to a network port.
+///
+/// Rate limits are loaded from `state.rate_limit_config` (populated from DB
+/// at startup with hardcoded fallbacks). Changes via the admin API take
+/// effect on next server restart.
 pub fn create_router(state: AppState) -> Router {
-    // ── #21 Per-endpoint rate limiting — Jaskier Shared Pattern ──────
-    // Streaming chat: 20 req/min (1 per 3s burst 20)
-    let rl_chat_stream = GovernorConfigBuilder::default()
-        .per_second(3)
-        .burst_size(20)
+    // ── #21 Per-endpoint rate limiting — DB-configurable ──────────────
+    let rl_cfg = &state.rate_limit_config;
+
+    let p_chat_stream = rl_cfg.get("chat_stream");
+    let p_chat = rl_cfg.get("chat");
+    let p_a2a = rl_cfg.get("a2a");
+    let p_default = rl_cfg.get("default");
+
+    // Build GovernorConfig from DB-loaded params
+    let gov_chat_stream = GovernorConfigBuilder::default()
+        .per_millisecond(p_chat_stream.interval_ms)
+        .burst_size(p_chat_stream.burst_size)
         .finish()
         .expect("rate limiter config: chat_stream");
-    // Non-streaming chat: 30 req/min (1 per 2s burst 30)
-    let rl_chat = GovernorConfigBuilder::default()
-        .per_second(2)
-        .burst_size(30)
+    let gov_chat = GovernorConfigBuilder::default()
+        .per_millisecond(p_chat.interval_ms)
+        .burst_size(p_chat.burst_size)
         .finish()
         .expect("rate limiter config: chat");
-    // A2A delegation endpoints: ~10 req/min (1 per 6s burst 3)
-    let rl_a2a = GovernorConfigBuilder::default()
-        .per_second(6)
-        .burst_size(3)
+    let gov_a2a = GovernorConfigBuilder::default()
+        .per_millisecond(p_a2a.interval_ms)
+        .burst_size(p_a2a.burst_size)
         .finish()
         .expect("rate limiter config: a2a");
-    // Other protected routes: 120 req/min (1 per 0.5s burst 120)
-    let rl_default = GovernorConfigBuilder::default()
-        .per_millisecond(500)
-        .burst_size(120)
+    let gov_default = GovernorConfigBuilder::default()
+        .per_millisecond(p_default.interval_ms)
+        .burst_size(p_default.burst_size)
         .finish()
         .expect("rate limiter config: default");
 
-    // Apply rate limiters to each route group
-    let protected = chat_stream_routes()
-        .layer(GovernorLayer::new(rl_chat_stream))
-        .merge(chat_routes().layer(GovernorLayer::new(rl_chat)))
-        .merge(a2a_routes().layer(GovernorLayer::new(rl_a2a)))
-        .merge(general_protected_routes().layer(GovernorLayer::new(rl_default)))
-        .route_layer(middleware::from_fn_with_state(
-            state.clone(),
-            auth::require_auth::<AppState>,
-        ));
+    // Apply rate limiters to each route group (skip layer if disabled in DB)
+    let mut protected: Router<AppState> = Router::new();
 
-    let rl_system = GovernorConfigBuilder::default()
-        .per_millisecond(500)
-        .burst_size(120)
+    if p_chat_stream.enabled {
+        protected = protected.merge(chat_stream_routes().layer(GovernorLayer::new(gov_chat_stream)));
+    } else {
+        protected = protected.merge(chat_stream_routes());
+    }
+
+    if p_chat.enabled {
+        protected = protected.merge(chat_routes().layer(GovernorLayer::new(gov_chat)));
+    } else {
+        protected = protected.merge(chat_routes());
+    }
+
+    if p_a2a.enabled {
+        protected = protected.merge(a2a_routes().layer(GovernorLayer::new(gov_a2a)));
+    } else {
+        protected = protected.merge(a2a_routes());
+    }
+
+    if p_default.enabled {
+        protected = protected.merge(general_protected_routes().layer(GovernorLayer::new(gov_default)));
+    } else {
+        protected = protected.merge(general_protected_routes());
+    }
+
+    // Admin rate-limits management endpoints (inside auth-protected group)
+    protected = protected
+        .route(
+            "/api/admin/rate-limits",
+            get(rate_limits::list_rate_limits),
+        )
+        .route(
+            "/api/admin/rate-limits/{endpoint_group}",
+            patch(rate_limits::update_rate_limit),
+        );
+
+    protected = protected.route_layer(middleware::from_fn_with_state(
+        state.clone(),
+        auth::require_auth::<AppState>,
+    ));
+
+    let gov_system = GovernorConfigBuilder::default()
+        .per_millisecond(p_default.interval_ms)
+        .burst_size(p_default.burst_size)
         .finish()
         .expect("rate limiter config: system");
 
@@ -489,7 +565,7 @@ pub fn create_router(state: AppState) -> Router {
             state.clone(),
             auth::require_api_key_auth,
         ))
-        .layer(GovernorLayer::new(rl_system));
+        .layer(GovernorLayer::new(gov_system));
 
     assemble_app(state, public_routes(), protected, api_key, extra_routes())
 }
@@ -506,6 +582,15 @@ pub fn create_test_router(state: AppState) -> Router {
         .merge(chat_routes())
         .merge(a2a_routes())
         .merge(general_protected_routes())
+        // Admin rate-limits management (also available in test router)
+        .route(
+            "/api/admin/rate-limits",
+            get(rate_limits::list_rate_limits),
+        )
+        .route(
+            "/api/admin/rate-limits/{endpoint_group}",
+            patch(rate_limits::update_rate_limit),
+        )
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_auth::<AppState>,

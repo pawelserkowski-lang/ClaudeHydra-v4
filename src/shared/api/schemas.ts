@@ -111,6 +111,10 @@ export const settingsSchema = z.object({
   auto_updater: z.boolean().optional().default(true),
   /** Telemetry (error reporting) enabled */
   telemetry: z.boolean().optional().default(false),
+  /** Message compaction threshold — compact after this many messages */
+  compaction_threshold: z.number().optional().default(25),
+  /** Message compaction keep — keep this many recent messages after compaction */
+  compaction_keep: z.number().optional().default(15),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -271,6 +275,13 @@ const wsHeartbeatSchema = z.object({
   type: z.literal('heartbeat'),
 });
 
+const wsFallbackSchema = z.object({
+  type: z.literal('fallback'),
+  from: z.string(),
+  to: z.string(),
+  reason: z.string(),
+});
+
 export const wsServerMessageSchema = z.discriminatedUnion('type', [
   wsStartSchema,
   wsTokenSchema,
@@ -282,6 +293,7 @@ export const wsServerMessageSchema = z.discriminatedUnion('type', [
   wsIterationSchema,
   wsPongSchema,
   wsHeartbeatSchema,
+  wsFallbackSchema,
 ]);
 
 export type WsServerMessage = z.infer<typeof wsServerMessageSchema>;
@@ -291,6 +303,7 @@ export type WsToolCallMessage = z.infer<typeof wsToolCallSchema>;
 export type WsToolResultMessage = z.infer<typeof wsToolResultSchema>;
 export type WsToolProgressMessage = z.infer<typeof wsToolProgressSchema>;
 export type WsIterationMessage = z.infer<typeof wsIterationSchema>;
+export type WsFallbackMessage = z.infer<typeof wsFallbackSchema>;
 
 export type WsClientMessage =
   | { type: 'execute'; prompt: string; model?: string; tools_enabled?: boolean; session_id?: string }

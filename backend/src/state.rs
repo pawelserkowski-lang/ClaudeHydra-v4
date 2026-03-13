@@ -76,6 +76,8 @@ pub struct AppState {
     pub a2a_task_tx: tokio::sync::broadcast::Sender<serde_json::Value>,
     /// Semaphore limiting concurrent A2A delegations (max 5 system-wide).
     pub a2a_semaphore: Arc<tokio::sync::Semaphore>,
+    /// Per-endpoint rate limit configuration loaded from DB at startup.
+    pub rate_limit_config: crate::rate_limits::RateLimitConfig,
 }
 
 // ── Shared: readiness helpers ───────────────────────────────────────────────
@@ -138,6 +140,9 @@ impl AppState {
 
         let api_keys_arc = Arc::new(RwLock::new(api_keys.clone()));
 
+        // Load rate limit config from DB (with hardcoded fallbacks)
+        let rate_limit_config = crate::rate_limits::load_from_db(&db).await;
+
         Self {
             db,
             agents,
@@ -165,6 +170,7 @@ impl AppState {
             browser_proxy_history: Arc::new(crate::browser_proxy::ProxyHealthHistory::new(50)),
             a2a_task_tx,
             a2a_semaphore: Arc::new(tokio::sync::Semaphore::new(5)),
+            rate_limit_config,
         }
     }
 
@@ -213,6 +219,8 @@ impl AppState {
             browser_proxy_history: Arc::new(crate::browser_proxy::ProxyHealthHistory::new(50)),
             a2a_task_tx,
             a2a_semaphore: Arc::new(tokio::sync::Semaphore::new(5)),
+            // Test constructor uses hardcoded defaults (no DB available)
+            rate_limit_config: crate::rate_limits::RateLimitConfig { groups: std::collections::HashMap::new() },
         }
     }
 }

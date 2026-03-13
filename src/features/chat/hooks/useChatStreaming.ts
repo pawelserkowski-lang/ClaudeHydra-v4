@@ -19,6 +19,13 @@ import type { useChatMessages } from './useChatMessages';
 // Hook options
 // ---------------------------------------------------------------------------
 
+/** Fallback event data emitted when the backend downgrades to a lighter model. */
+export interface FallbackInfo {
+  from: string;
+  to: string;
+  reason: string;
+}
+
 interface UseChatStreamingOptions {
   selectedModel: string;
   toolsEnabled: boolean;
@@ -28,6 +35,7 @@ interface UseChatStreamingOptions {
   generateTitleWithSync: (id: string) => Promise<void>;
   addPrompt: (content: string) => void;
   onComplete?: () => void;
+  onFallback?: (info: FallbackInfo) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -43,6 +51,7 @@ export function useChatStreaming({
   generateTitleWithSync,
   addPrompt,
   onComplete,
+  onFallback,
 }: UseChatStreamingOptions) {
   const isOnline = useOnlineStatus();
 
@@ -69,10 +78,12 @@ export function useChatStreaming({
         }
       }
 
+      const userMessageId = crypto.randomUUID();
       const userMessage: ChatMessage = {
-        id: crypto.randomUUID(),
+        id: userMessageId,
         role: 'user',
         content,
+        status: 'pending',
         attachments: attachments.map((a) => ({
           id: a.id,
           name: a.name,
@@ -109,7 +120,12 @@ export function useChatStreaming({
         model: selectedModel,
         streaming: true,
       };
-      updateSessionMessages(sessionId, (prev) => [...prev, assistantMessage]);
+      updateSessionMessages(sessionId, (prev) => {
+        // Confirm the pending user message now that we're starting the stream
+        return prev
+          .map((m) => (m.id === userMessageId ? { ...m, status: 'confirmed' as const } : m))
+          .concat(assistantMessage);
+      });
 
       // AbortController for this stream
       const controller = new AbortController();
@@ -143,7 +159,13 @@ export function useChatStreaming({
           controller.signal,
         )) {
           // Dispatch based on event type
-          if (event.type === 'tool_call') {
+          if (event.type === 'fallback') {
+            onFallback?.({
+              from: event.from ?? 'unknown',
+              to: event.to ?? 'unknown',
+              reason: event.reason ?? 'unknown',
+            });
+          } else if (event.type === 'tool_call') {
             const ti: ToolInteraction = {
               id: event.tool_use_id ?? crypto.randomUUID(),
               toolName: event.tool_name ?? 'unknown',
@@ -234,18 +256,9 @@ export function useChatStreaming({
         console.error('Chat error:', err);
         toast.error('Failed to get response');
         updateSessionMessages(sessionId, (prev) => {
-          const last = prev[prev.length - 1];
-          if (last?.streaming) {
-            return [
-              ...prev.slice(0, -1),
-              {
-                ...last,
-                content: `Error: ${err instanceof Error ? err.message : String(err)}`,
-                streaming: false,
-              },
-            ];
-          }
-          return prev;
+          // Remove the empty streaming assistant message and mark the user message as error
+          const withoutStreaming = prev.filter((m) => !(m.streaming && m.role === 'assistant' && !m.content));
+          return withoutStreaming.map((m) => (m.id === userMessageId ? { ...m, status: 'error' as const } : m));
         });
         setSessionLoading(sessionId, false);
         delete abortControllersRef.current[sessionId];
@@ -262,6 +275,7 @@ export function useChatStreaming({
       setSessionLoading,
       addPrompt,
       onComplete,
+      onFallback,
       sessionMessagesRef,
       loadingSessionsRef,
       abortControllersRef,

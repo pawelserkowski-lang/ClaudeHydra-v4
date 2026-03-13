@@ -6,6 +6,7 @@
 
 import type {
   WsCompleteMessage as SharedWsCompleteMessage,
+  WsFallbackMessage as SharedWsFallbackMessage,
   WsStartMessage as SharedWsStartMessage,
   WsToolCallMessage as SharedWsToolCallMessage,
   WsToolResultMessage as SharedWsToolResultMessage,
@@ -17,6 +18,7 @@ import {
 import { useCallback, useMemo } from 'react';
 import type {
   WsCompleteMessage,
+  WsFallbackMessage,
   WsIterationMessage,
   WsServerMessage,
   WsStartMessage,
@@ -43,6 +45,7 @@ export interface WsCallbacks {
   onIteration?: (msg: WsIterationMessage, sessionId: string | null) => void;
   onComplete?: (msg: WsCompleteMessage, sessionId: string | null) => void;
   onError?: (message: string, sessionId: string | null) => void;
+  onFallback?: (msg: WsFallbackMessage, sessionId: string | null) => void;
 }
 
 // ============================================================================
@@ -97,6 +100,9 @@ export function useWebSocketChat(callbacks: WsCallbacks) {
         callbacks.onComplete?.(msg as unknown as WsCompleteMessage, sid);
       },
       onError: callbacks.onError,
+      onFallback: (msg: SharedWsFallbackMessage, sid: string | null) => {
+        callbacks.onFallback?.(msg as unknown as WsFallbackMessage, sid);
+      },
     }),
     [callbacks],
   );

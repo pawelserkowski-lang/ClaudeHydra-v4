@@ -396,3 +396,16 @@
 .animate-slide-up {
   animation: slideUp 0.3s ease-out;
 }
+
+/* ============================================
+   OPTIMISTIC MESSAGE STATUS ANIMATIONS
+   ============================================ */
+@keyframes optimistic-pulse {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}

@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next';
 import { Card } from '@/components/atoms';
 import { AutoUpdaterSection } from './AutoUpdaterSection';
 import { BrowserProxySection } from './BrowserProxySection';
+import { CompactionSection } from './CompactionSection';
 import { CompletionSoundSection } from './CompletionSoundSection';
 import { CustomInstructionsSection } from './CustomInstructionsSection';
 import { GoogleOAuthSection } from './GoogleOAuthSection';
@@ -87,6 +88,13 @@ export const SettingsView = memo(() => {
         <Card>
           <div className="p-6">
             <MaxIterationsSection />
+          </div>
+        </Card>
+
+        {/* Message Compaction Section */}
+        <Card>
+          <div className="p-6">
+            <CompactionSection />
           </div>
         </Card>
 

@@ -11,6 +11,7 @@
 
 import { useIsMobile } from '@jaskier/core';
 import {
+  BarChart3,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -50,6 +51,7 @@ import { useViewTheme } from '@jaskier/chat-module';
 import { FooterControls, LogoButton } from '@jaskier/hydra-app/components/organisms';
 import { cn } from '@jaskier/ui';
 import { SessionSearch } from '@/components/molecules/SessionSearch';
+import { TagChip } from '@/components/molecules/TagChip';
 import { useViewStore, type ViewId } from '@/stores/viewStore';
 import { SessionItem } from './sidebar/SessionItem';
 import { useSidebarLogic } from './sidebar/useSidebarLogic';
@@ -95,6 +97,17 @@ function SidebarContent({ collapsed, onClose, isMobile = false }: SidebarContent
     handleDeleteSession,
     handleRenameSession,
     handleNavClick: navClickBase,
+    // Tags
+    activeSessionTags,
+    allTagsList,
+    handleAddTags,
+    handleRemoveTag,
+    // Search & filter
+    searchQuery: _searchQuery,
+    setSearchQuery: _setSearchQuery,
+    filterTags,
+    handleTagFilterToggle,
+    handleClearFilters,
   } = useSidebarLogic();
 
   const theme = useViewTheme();
@@ -144,6 +157,7 @@ function SidebarContent({ collapsed, onClose, isMobile = false }: SidebarContent
         { id: 'chat', label: t('nav.chat', 'Chat'), icon: MessageSquare },
         { id: 'logs' as ViewId, label: t('nav.logs', 'Logs'), icon: ScrollText },
         { id: 'delegations' as ViewId, label: t('nav.delegations', 'Delegations'), icon: Network },
+        { id: 'analytics' as ViewId, label: t('nav.analytics', 'Analytics'), icon: BarChart3 },
         { id: 'settings', label: t('nav.settings', 'Settings'), icon: Settings },
       ],
     },
@@ -326,7 +340,36 @@ function SidebarContent({ collapsed, onClose, isMobile = false }: SidebarContent
 
         {/* #19 - Session search input (only when expanded and sessions visible) */}
         {!collapsed && showSessions && sessions.length > 0 && (
-          <SessionSearch onSearch={handleSessionSearch} className="px-1 pb-1.5" />
+          <>
+            <SessionSearch onSearch={handleSessionSearch} className="px-1 pb-1" />
+            {/* Tag filter chips */}
+            {allTagsList.length > 0 && (
+              <div className="flex items-center gap-1 flex-wrap px-1 pb-1.5">
+                {allTagsList.slice(0, 8).map((tag) => (
+                  <TagChip
+                    key={tag}
+                    tag={tag}
+                    isDark={isDark}
+                    size="xs"
+                    onClick={() => handleTagFilterToggle(tag)}
+                    className={cn(
+                      filterTags.includes(tag) && (isDark ? 'ring-1 ring-white/40' : 'ring-1 ring-black/30'),
+                    )}
+                  />
+                ))}
+                {filterTags.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearFilters}
+                    className="text-[9px] text-[var(--matrix-text-secondary)] hover:text-[var(--matrix-text-primary)] transition-colors"
+                    aria-label={t('tags.clearFilters', 'Clear filters')}
+                  >
+                    <X size={10} />
+                  </button>
+                )}
+              </div>
+            )}
+          </>
         )}
 
         <AnimatePresence>
@@ -362,6 +405,11 @@ function SidebarContent({ collapsed, onClose, isMobile = false }: SidebarContent
                     onSelect={() => handleSelectSession(session.id)}
                     onDelete={() => handleDeleteSession(session.id)}
                     onRename={(newTitle) => handleRenameSession(session.id, newTitle)}
+                    tags={session.id === currentSessionId ? activeSessionTags : []}
+                    suggestedTags={allTagsList}
+                    onAddTags={(tags) => handleAddTags(session.id, tags)}
+                    onRemoveTag={(tag) => handleRemoveTag(session.id, tag)}
+                    onTagClick={handleTagFilterToggle}
                   />
                 ))
               )}
@@ -500,8 +548,7 @@ function SidebarContent({ collapsed, onClose, isMobile = false }: SidebarContent
 
 export function Sidebar() {
   const { t } = useTranslation();
-  const { sidebarCollapsed, setSidebarCollapsed, toggleSidebar, currentView } =
-    useViewStore();
+  const { sidebarCollapsed, setSidebarCollapsed, toggleSidebar, currentView } = useViewStore();
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
@@ -547,7 +594,7 @@ export function Sidebar() {
         }
       }
     },
-    [mobileDrawerOpen, setMobileDrawerOpen],
+    [mobileDrawerOpen],
   );
 
   // Global swipe-from-left-edge to open
@@ -577,7 +624,7 @@ export function Sidebar() {
       window.removeEventListener('touchstart', handleTouchStart);
       window.removeEventListener('touchend', handleTouchEnd);
     };
-  }, [isMobile, mobileDrawerOpen, setMobileDrawerOpen]);
+  }, [isMobile, mobileDrawerOpen]);
 
   // Mobile: hamburger + overlay drawer with swipe + backdrop
   if (isMobile) {

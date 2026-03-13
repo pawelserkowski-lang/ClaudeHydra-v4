@@ -10,10 +10,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { apiGet } from '@/shared/api/client';
+import { useSettingsQuery } from '@/shared/hooks/useSettings';
 import { useViewStore } from '@/stores/viewStore';
 import type { ChatMessage, ToolInteraction } from '../components/MessageBubble';
 
 import type { SessionDetail } from './useSessions';
+
+/** Sentinel message ID marking the compaction divider */
+export const COMPACTION_DIVIDER_ID = '__compaction_divider__';
 
 export function useChatMessages() {
   // Per-session message cache & loading state
@@ -21,32 +25,75 @@ export function useChatMessages() {
   const loadingSessionsRef = useRef<Set<string>>(new Set());
   const abortControllersRef = useRef<Record<string, AbortController>>({});
 
+  // Track which sessions have been compacted (for "load full history" button)
+  const compactedSessionsRef = useRef<Set<string>>(new Set());
+
   // Displayed state (derived from active session)
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
   const currentSessionId = useViewStore(useShallow((s) => s.currentSessionId));
 
+  // Configurable compaction thresholds from settings
+  const { data: settings } = useSettingsQuery();
+  const compactionThreshold = settings?.compaction_threshold ?? 25;
+  const compactionKeep = settings?.compaction_keep ?? 15;
+
   /** Update messages for a specific session. Only updates display if session is active. */
-  const updateSessionMessages = useCallback((sessionId: string, updater: (prev: ChatMessage[]) => ChatMessage[]) => {
-    const prev = sessionMessagesRef.current[sessionId] ?? [];
-    let updated = updater(prev);
+  const updateSessionMessages = useCallback(
+    (sessionId: string, updater: (prev: ChatMessage[]) => ChatMessage[]) => {
+      const prev = sessionMessagesRef.current[sessionId] ?? [];
+      let updated = updater(prev);
 
-    // Auto-compaction: if messages exceed 25, keep the last 15 to save tokens
-    if (updated.length > 25) {
-      const compactedMessage: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: 'system',
-        content: '_[System] History automatically compacted to save tokens. Older messages archived._',
-        timestamp: Date.now(),
-      };
-      updated = [compactedMessage, ...updated.slice(updated.length - 15)];
-    }
+      // Auto-compaction: if messages exceed threshold, keep the last N to save tokens
+      if (updated.length > compactionThreshold) {
+        const dividerMessage: ChatMessage = {
+          id: COMPACTION_DIVIDER_ID,
+          role: 'system',
+          content: '__compaction_divider__',
+          timestamp: Date.now(),
+        };
+        compactedSessionsRef.current.add(sessionId);
+        updated = [dividerMessage, ...updated.slice(updated.length - compactionKeep)];
+      }
 
-    sessionMessagesRef.current[sessionId] = updated;
+      sessionMessagesRef.current[sessionId] = updated;
 
-    if (sessionId === useViewStore.getState().currentSessionId) {
-      setMessages(updated);
+      if (sessionId === useViewStore.getState().currentSessionId) {
+        setMessages(updated);
+      }
+    },
+    [compactionThreshold, compactionKeep],
+  );
+
+  /** Load full message history from DB for a session (overrides compaction). */
+  const loadFullHistory = useCallback(async (sessionId: string) => {
+    try {
+      const detail = await apiGet<SessionDetail>(`/api/sessions/${sessionId}`);
+      const mapped: ChatMessage[] = detail.messages.map((m) => ({
+        id: m.id,
+        role: m.role as ChatMessage['role'],
+        content: m.content,
+        model: m.model ?? undefined,
+        timestamp: new Date(m.timestamp).getTime(),
+        toolInteractions: m.tool_interactions?.map(
+          (ti): ToolInteraction => ({
+            id: ti.tool_use_id,
+            toolName: ti.tool_name,
+            toolInput: ti.tool_input,
+            result: ti.result,
+            isError: ti.is_error,
+            status: 'completed',
+          }),
+        ),
+      }));
+      compactedSessionsRef.current.delete(sessionId);
+      sessionMessagesRef.current[sessionId] = mapped;
+      if (sessionId === useViewStore.getState().currentSessionId) {
+        setMessages(mapped);
+      }
+    } catch {
+      // Best-effort — session may not exist in DB yet
     }
   }, []);
 
@@ -123,6 +170,7 @@ export function useChatMessages() {
     if (currentSessionId) {
       sessionMessagesRef.current[currentSessionId] = [];
       loadingSessionsRef.current.delete(currentSessionId);
+      compactedSessionsRef.current.delete(currentSessionId);
       // Abort any in-progress stream for this session
       abortControllersRef.current[currentSessionId]?.abort();
       delete abortControllersRef.current[currentSessionId];
@@ -140,5 +188,6 @@ export function useChatMessages() {
     updateSessionMessages,
     setSessionLoading,
     clearChat,
+    loadFullHistory,
   };
 }

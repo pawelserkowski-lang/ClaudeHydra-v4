@@ -10,8 +10,10 @@
 //! - `agents` — agent listing and refresh
 //! - `files` — file listing and native folder browser
 //! - `prompt_history` — bash-like prompt recall
+//! - `analytics` — agent performance dashboard aggregation endpoints
 
 pub mod agents;
+pub mod analytics;
 pub mod chat;
 pub mod files;
 pub mod health;
@@ -20,9 +22,11 @@ pub mod prompt_history;
 pub mod sessions;
 pub mod settings;
 pub mod streaming;
+pub mod tags;
 
 // Re-export everything (including utoipa __path_* types needed by OpenApi derive)
 pub use agents::*;
+pub use analytics::*;
 pub use chat::*;
 pub use files::*;
 pub use health::*;
@@ -31,6 +35,7 @@ pub use prompt_history::*;
 pub use sessions::*;
 pub use settings::*;
 pub use streaming::*;
+pub use tags::*;
 
 // ── Shared constants ──────────────────────────────────────────────────────
 

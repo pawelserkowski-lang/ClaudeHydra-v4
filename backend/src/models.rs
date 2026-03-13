@@ -32,6 +32,12 @@ pub struct SettingsRow {
     /// Telemetry (error reporting) enabled
     #[sqlx(default)]
     pub telemetry: bool,
+    /// Message compaction threshold — compact after this many messages (default 25)
+    #[sqlx(default)]
+    pub compaction_threshold: i32,
+    /// Message compaction keep — keep this many recent messages after compaction (default 15)
+    #[sqlx(default)]
+    pub compaction_keep: i32,
 }
 
 #[derive(sqlx::FromRow)]
@@ -177,6 +183,12 @@ pub struct AppSettings {
     /// Telemetry (error reporting) enabled
     #[serde(default)]
     pub telemetry: bool,
+    /// Message compaction threshold — compact after this many messages (default 25)
+    #[serde(default = "default_compaction_threshold")]
+    pub compaction_threshold: i32,
+    /// Message compaction keep — keep this many recent messages after compaction (default 15)
+    #[serde(default = "default_compaction_keep")]
+    pub compaction_keep: i32,
 }
 
 fn default_true() -> bool {
@@ -193,6 +205,14 @@ fn default_temperature() -> f64 {
 
 fn default_max_tokens() -> i32 {
     4096
+}
+
+fn default_compaction_threshold() -> i32 {
+    25
+}
+
+fn default_compaction_keep() -> i32 {
+    15
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -421,6 +441,12 @@ pub enum WsServerMessage {
     Pong,
     /// Server-initiated heartbeat to keep the connection alive.
     Heartbeat,
+    /// Model fallback occurred (rate-limited or error on primary model).
+    Fallback {
+        from: String,
+        to: String,
+        reason: String,
+    },
 }
 
 // ── Agent Config (DB-driven) ────────────────────────────────────────────

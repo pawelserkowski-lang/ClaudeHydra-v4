@@ -22,7 +22,9 @@ pub async fn get_settings(State(state): State<AppState>) -> Result<Json<Value>, 
          COALESCE(max_tokens, 4096) AS max_tokens, \
          COALESCE(custom_instructions, '') AS custom_instructions, \
          COALESCE(auto_updater, TRUE) AS auto_updater, \
-         COALESCE(telemetry, FALSE) AS telemetry \
+         COALESCE(telemetry, FALSE) AS telemetry, \
+         COALESCE(compaction_threshold, 25) AS compaction_threshold, \
+         COALESCE(compaction_keep, 15) AS compaction_keep \
          FROM ch_settings WHERE id = 1",
     )
     .fetch_one(&state.db)
@@ -45,6 +47,8 @@ pub async fn get_settings(State(state): State<AppState>) -> Result<Json<Value>, 
         custom_instructions: row.custom_instructions,
         auto_updater: row.auto_updater,
         telemetry: row.telemetry,
+        compaction_threshold: row.compaction_threshold,
+        compaction_keep: row.compaction_keep,
     };
 
     Ok(Json(
@@ -74,7 +78,9 @@ pub async fn update_settings(
         "UPDATE ch_settings SET theme = $1, language = $2, default_model = $3, \
          auto_start = $4, welcome_message = $5, working_directory = $6, max_iterations = $7, \
          temperature = $8, max_tokens = $9, custom_instructions = $10, \
-         auto_updater = $11, telemetry = $12, updated_at = NOW() WHERE id = 1",
+         auto_updater = $11, telemetry = $12, \
+         compaction_threshold = $13, compaction_keep = $14, \
+         updated_at = NOW() WHERE id = 1",
     )
     .bind(&new_settings.theme)
     .bind(&new_settings.language)
@@ -88,6 +94,8 @@ pub async fn update_settings(
     .bind(&new_settings.custom_instructions)
     .bind(new_settings.auto_updater)
     .bind(new_settings.telemetry)
+    .bind(new_settings.compaction_threshold.clamp(10, 100))
+    .bind(new_settings.compaction_keep.clamp(5, 50))
     .execute(&state.db)
     .await
     .map_err(|e| {

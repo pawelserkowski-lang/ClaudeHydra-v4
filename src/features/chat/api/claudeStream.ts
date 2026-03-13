@@ -11,20 +11,24 @@ import { env } from '@/shared/config/env';
 // Types
 // ---------------------------------------------------------------------------
 
-/** Extended NDJSON chunk — may be a text token, tool_call, or tool_result. */
-interface NdjsonEvent {
+/** Extended NDJSON chunk — may be a text token, tool_call, tool_result, or fallback notification. */
+export interface NdjsonEvent {
   // Text token (backward-compatible)
   token?: string;
   done?: boolean;
   model?: string;
   total_tokens?: number;
   // Extended tool events
-  type?: 'tool_call' | 'tool_result';
+  type?: 'tool_call' | 'tool_result' | 'fallback';
   tool_use_id?: string;
   tool_name?: string;
   tool_input?: Record<string, unknown>;
   result?: string;
   is_error?: boolean;
+  // Fallback event fields
+  from?: string;
+  to?: string;
+  reason?: string;
 }
 
 // ---------------------------------------------------------------------------

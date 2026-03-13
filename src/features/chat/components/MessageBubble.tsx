@@ -1,12 +1,14 @@
 ﻿import { useViewTheme } from '@jaskier/chat-module';
 import { AgentAvatar, BaseMessageBubble, cn } from '@jaskier/ui';
-import { Terminal } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { type MouseEvent, memo, useDeferredValue, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useCurrentSession } from '@/stores/viewStore';
 import { ErrorBoundary } from './ErrorBoundary';
 import { MessageRating } from './MessageRating';
+import type { ToolSegment } from './messageParser';
 import { splitToolOutput, stripParallelHeader } from './messageParser';
+import { ToolResultRenderer } from './ToolResultRenderer';
 
 export interface ToolInteraction {
   id: string;
@@ -25,6 +27,7 @@ export interface ChatMessage {
   error?: boolean;
   model?: string;
   streaming?: boolean;
+  status?: 'pending' | 'confirmed' | 'error';
   toolInteractions?: ToolInteraction[];
   attachments?: Array<{
     id: string;
@@ -40,9 +43,10 @@ interface MessageBubbleProps {
   isLast: boolean;
   isStreaming: boolean;
   onContextMenu?: (e: MouseEvent<HTMLElement>, message: ChatMessage) => void;
+  onRetry?: (message: ChatMessage) => void;
 }
 
-export const MessageBubble = memo<MessageBubbleProps>(({ message, isLast, isStreaming, onContextMenu }) => {
+export const MessageBubble = memo<MessageBubbleProps>(({ message, isLast, isStreaming, onContextMenu, onRetry }) => {
   const { t } = useTranslation();
   const theme = useViewTheme();
   const currentSessionId = useCurrentSession()?.id;
@@ -59,7 +63,7 @@ export const MessageBubble = memo<MessageBubbleProps>(({ message, isLast, isStre
         .join('\n'),
     [segments],
   );
-  const toolSegments = useMemo(() => segments.filter((s) => s.type === 'tool'), [segments]);
+  const toolSegments = useMemo(() => segments.filter((s): s is ToolSegment => s.type === 'tool'), [segments]);
 
   const status = useMemo<'idle' | 'typing' | 'thinking' | 'error'>(() => {
     if (message.error) return 'error';
@@ -75,83 +79,58 @@ export const MessageBubble = memo<MessageBubbleProps>(({ message, isLast, isStre
     ? 'bg-emerald-500/15 border border-emerald-500/20 text-black'
     : 'bg-[var(--matrix-accent)]/15 border border-[var(--matrix-accent)]/20 text-white';
 
-  const toolDetailsClasses = theme.isLight ? 'border-black/10 bg-black/5' : 'border-white/10 bg-black/20';
-
-  const toolSummaryClasses = theme.isLight ? 'text-black/60 hover:text-black/80' : 'text-white/60 hover:text-white/80';
-
-  const toolPreClasses = theme.isLight ? 'text-black/70 border-black/5' : 'text-white/70 border-white/5';
+  const isPending = message.status === 'pending';
+  const isError = message.status === 'error';
 
   return (
     <ErrorBoundary name="MessageBubble">
       <article onContextMenu={(e) => onContextMenu?.(e, message)}>
-        <BaseMessageBubble
-          message={{
-            id: message.id || '',
-            role: message.role as 'user' | 'assistant' | 'system',
-            content: textContent,
-            isStreaming: isStreaming && isLast,
-            timestamp: message.timestamp,
-          }}
-          theme={{
-            isLight: theme.isLight,
-            bubbleAssistant: assistantBubbleClasses,
-            bubbleUser: userBubbleClasses,
-            accentText: theme.accentText,
-            accentBg: theme.accentBg,
-            textMuted: theme.textMuted,
-          }}
-          avatar={message.role === 'assistant' ? <AgentAvatar state={status} /> : undefined}
-          copyText={t('chat.copyMessage', 'Copy message')}
-          copiedText={t('common.copied', 'Copied')}
-          modelBadge={message.model}
-          toolInteractions={
-            toolSegments.length > 0 ? (
-              <div className="mb-3">
-                {toolSegments.map((segment) => (
-                  <details
-                    key={`tool-${segment.name}-${segment.content.slice(0, 20)}`}
-                    className={cn('my-2 rounded-lg border', toolDetailsClasses)}
-                  >
-                    {/* biome-ignore lint/a11y/noStaticElementInteractions: summary is natively interactive in details */}
-                    {/* biome-ignore lint/a11y/useAriaPropsSupportedByRole: aria-expanded needed for screen readers */}
-                    <summary
-                      aria-expanded="false"
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          e.currentTarget.parentElement?.toggleAttribute('open');
-                          e.currentTarget.setAttribute(
-                            'aria-expanded',
-                            e.currentTarget.parentElement?.hasAttribute('open') ? 'true' : 'false',
-                          );
-                        }
-                      }}
-                      className={cn(
-                        'cursor-pointer px-3 py-2 text-xs flex items-center gap-2 outline-none focus-visible:ring-2 focus-visible:ring-[var(--matrix-accent)] focus-visible:rounded',
-                        toolSummaryClasses,
-                      )}
-                    >
-                      <Terminal className="w-3.5 h-3.5" />
-                      <span>{t('chat.toolLabel', { name: segment.name })}</span>
-                      <span className="ml-auto text-[10px]">
-                        {t('chat.linesCount', { count: segment.content.split('\n').length })}
-                      </span>
-                    </summary>
-                    <pre
-                      className={cn(
-                        'overflow-x-auto px-3 py-2 text-xs border-t max-h-60 overflow-y-auto',
-                        toolPreClasses,
-                      )}
-                    >
-                      <code>{segment.content}</code>
-                    </pre>
-                  </details>
-                ))}
-              </div>
-            ) : undefined
-          }
-        />
+        <div
+          className={cn(
+            isPending && 'opacity-70 animate-[optimistic-pulse_2s_ease-in-out_infinite]',
+            isError && 'border-l-2 border-red-500 pl-1',
+          )}
+        >
+          <BaseMessageBubble
+            message={{
+              id: message.id || '',
+              role: message.role as 'user' | 'assistant' | 'system',
+              content: textContent,
+              isStreaming: isStreaming && isLast,
+              timestamp: message.timestamp,
+            }}
+            theme={{
+              isLight: theme.isLight,
+              bubbleAssistant: assistantBubbleClasses,
+              bubbleUser: userBubbleClasses,
+              accentText: theme.accentText,
+              accentBg: theme.accentBg,
+              textMuted: theme.textMuted,
+            }}
+            avatar={message.role === 'assistant' ? <AgentAvatar state={status} /> : undefined}
+            copyText={t('chat.copyMessage', 'Copy message')}
+            copiedText={t('common.copied', 'Copied')}
+            modelBadge={message.model}
+            toolInteractions={
+              toolSegments.length > 0 ? (
+                <ToolResultRenderer segments={toolSegments} isLight={theme.isLight} />
+              ) : undefined
+            }
+          />
+        </div>
+        {/* Retry button for error status */}
+        {isError && message.role === 'user' && onRetry && (
+          <div className="flex justify-end mt-1 mr-2">
+            <button
+              type="button"
+              onClick={() => onRetry(message)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-lg transition-colors"
+            >
+              <RefreshCw size={12} />
+              {t('chat.retry', 'Retry')}
+            </button>
+          </div>
+        )}
         {!isStreaming && message.role === 'assistant' && currentSessionId && message.id && (
           <div className="flex justify-start ml-14 mb-4">
             <MessageRating sessionId={currentSessionId} messageId={message.id} />

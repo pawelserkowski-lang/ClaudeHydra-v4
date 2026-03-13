@@ -2,6 +2,8 @@ import { cn } from '@jaskier/ui';
 import { Check, Edit2, Loader2, MessageSquare, Trash2, X } from 'lucide-react';
 import { type KeyboardEvent, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { TagChip } from '@/components/molecules/TagChip';
+import { AddTagButton, TagInput } from '@/components/molecules/TagInput';
 import type { ChatSession } from '@/stores/viewStore';
 
 // ---------------------------------------------------------------------------
@@ -33,6 +35,16 @@ interface SessionItemProps {
   onSelect: () => void;
   onDelete: () => void;
   onRename: (newTitle: string) => void;
+  /** Tags currently assigned to this session */
+  tags?: string[];
+  /** All available tags for autocomplete suggestions */
+  suggestedTags?: string[];
+  /** Called when tags are added */
+  onAddTags?: (tags: string[]) => void;
+  /** Called when a tag is removed */
+  onRemoveTag?: (tag: string) => void;
+  /** Called when a tag chip is clicked (for filtering) */
+  onTagClick?: (tag: string) => void;
 }
 
 export function SessionItem({
@@ -44,12 +56,18 @@ export function SessionItem({
   onSelect,
   onDelete,
   onRename,
+  tags = [],
+  suggestedTags = [],
+  onAddTags,
+  onRemoveTag,
+  onTagClick,
 }: SessionItemProps) {
   const { t } = useTranslation();
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState(session.title);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showTooltip, setShowTooltip] = useState(false);
+  const [showTagInput, setShowTagInput] = useState(false);
 
   useEffect(() => {
     if (!confirmDelete) return;
@@ -149,7 +167,7 @@ export function SessionItem({
       tabIndex={0}
       data-testid="sidebar-session-item"
       className={cn(
-        'group relative flex items-center gap-2 p-2 rounded cursor-pointer transition-colors w-full text-left',
+        'group relative flex flex-col gap-0.5 p-2 rounded cursor-pointer transition-colors w-full text-left',
         isActive
           ? isDark
             ? 'bg-white/15 text-[var(--matrix-accent)]'
@@ -170,50 +188,88 @@ export function SessionItem({
       onMouseEnter={() => setShowTooltip(true)}
       onMouseLeave={() => setShowTooltip(false)}
     >
-      {/* #16 - Show spinner for pending sessions */}
-      {session._pending ? (
-        <Loader2 size={14} className="flex-shrink-0 animate-spin text-[var(--matrix-accent)]/60" />
-      ) : (
-        <MessageSquare size={14} className="flex-shrink-0" />
-      )}
-      <div className="flex-1 min-w-0">
-        <p className={cn('text-sm truncate', session._pending && 'opacity-60 italic')}>{session.title}</p>
-        <p className="text-xs text-[var(--matrix-text-secondary)] truncate">
-          {session._pending
-            ? t('sidebar.creating', 'Creating...')
-            : `${session.messageCount} ${session.messageCount === 1 ? t('sidebar.message', 'message') : t('sidebar.messages', 'messages')}`}
-        </p>
+      {/* Top row: icon + title + actions */}
+      <div className="flex items-center gap-2">
+        {/* #16 - Show spinner for pending sessions */}
+        {session._pending ? (
+          <Loader2 size={14} className="flex-shrink-0 animate-spin text-[var(--matrix-accent)]/60" />
+        ) : (
+          <MessageSquare size={14} className="flex-shrink-0" />
+        )}
+        <div className="flex-1 min-w-0">
+          <p className={cn('text-sm truncate', session._pending && 'opacity-60 italic')}>{session.title}</p>
+          <p className="text-xs text-[var(--matrix-text-secondary)] truncate">
+            {session._pending
+              ? t('sidebar.creating', 'Creating...')
+              : `${session.messageCount} ${session.messageCount === 1 ? t('sidebar.message', 'message') : t('sidebar.messages', 'messages')}`}
+          </p>
+        </div>
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsEditing(true);
+            }}
+            className={cn('p-1 rounded', isDark ? 'hover:bg-white/15' : 'hover:bg-black/5')}
+            title={t('sidebar.rename', 'Rename')}
+          >
+            <Edit2 size={12} />
+          </button>
+          <button
+            type="button"
+            onClick={handleDeleteClick}
+            className={cn(
+              'p-1 rounded transition-colors',
+              confirmDelete
+                ? isDark
+                  ? 'bg-red-500/30 text-red-300'
+                  : 'bg-red-500/20 text-red-600'
+                : isDark
+                  ? 'hover:bg-red-500/20 text-red-400'
+                  : 'hover:bg-red-500/15 text-red-600',
+            )}
+            title={confirmDelete ? t('sidebar.confirmDelete', 'Click again to delete') : t('common.delete', 'Delete')}
+          >
+            <Trash2 size={12} />
+          </button>
+        </div>
       </div>
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setIsEditing(true);
-          }}
-          className={cn('p-1 rounded', isDark ? 'hover:bg-white/15' : 'hover:bg-black/5')}
-          title={t('sidebar.rename', 'Rename')}
-        >
-          <Edit2 size={12} />
-        </button>
-        <button
-          type="button"
-          onClick={handleDeleteClick}
-          className={cn(
-            'p-1 rounded transition-colors',
-            confirmDelete
-              ? isDark
-                ? 'bg-red-500/30 text-red-300'
-                : 'bg-red-500/20 text-red-600'
-              : isDark
-                ? 'hover:bg-red-500/20 text-red-400'
-                : 'hover:bg-red-500/15 text-red-600',
+
+      {/* Tag chips row */}
+      {(tags.length > 0 || isActive) && !session._pending && (
+        <div className="flex items-center gap-1 flex-wrap ml-5 mt-0.5">
+          {tags.map((tag) => (
+            <TagChip
+              key={tag}
+              tag={tag}
+              isDark={isDark}
+              removable={isActive}
+              onRemove={() => onRemoveTag?.(tag)}
+              onClick={onTagClick ? () => onTagClick(tag) : undefined}
+            />
+          ))}
+          {isActive && onAddTags && !showTagInput && (
+            <AddTagButton isDark={isDark} onClick={() => setShowTagInput(true)} />
           )}
-          title={confirmDelete ? t('sidebar.confirmDelete', 'Click again to delete') : t('common.delete', 'Delete')}
-        >
-          <Trash2 size={12} />
-        </button>
-      </div>
+        </div>
+      )}
+
+      {/* Inline tag input (shown when adding tags on active session) */}
+      {showTagInput && isActive && (
+        <div className="ml-5 mt-0.5">
+          <TagInput
+            existingTags={tags}
+            suggestedTags={suggestedTags}
+            onSubmit={(newTags) => {
+              onAddTags?.(newTags);
+              setShowTagInput(false);
+            }}
+            onCancel={() => setShowTagInput(false)}
+            isDark={isDark}
+          />
+        </div>
+      )}
 
       {/* Tooltip with preview */}
       {showTooltip && session.preview && (
@@ -240,6 +296,13 @@ export function SessionItem({
               {timeAgo(session.updatedAt ?? session.createdAt)}
             </span>
           </div>
+          {tags.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1.5 pt-1 border-t border-[var(--matrix-border)]">
+              {tags.map((tag) => (
+                <TagChip key={tag} tag={tag} isDark={isDark} size="xs" />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

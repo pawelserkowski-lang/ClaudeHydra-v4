@@ -284,9 +284,11 @@ pub async fn claude_chat_stream(
     let resp = send_to_anthropic(&state, &body, 300).await?;
 
     // Fallback chain: if retryable error, try lighter model
-    let resp = if !resp.status().is_success() && is_retryable_status(resp.status().as_u16()) {
+    let (resp, fallback_event) = if !resp.status().is_success() && is_retryable_status(resp.status().as_u16()) {
+        let original_status = resp.status();
         let fallback_models = ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"];
         let mut fallback_resp = None;
+        let mut fallback_ndjson: Option<String> = None;
         for fb_model in &fallback_models {
             if *fb_model == model {
                 continue;
@@ -294,20 +296,30 @@ pub async fn claude_chat_stream(
             tracing::warn!(
                 "claude_chat_stream: {} returned {}, falling back to {}",
                 model,
-                resp.status(),
+                original_status,
                 fb_model
             );
             body["model"] = json!(fb_model);
             if let Ok(fb) = send_to_anthropic(&state, &body, 300).await
                 && fb.status().is_success()
             {
+                let reason = if original_status.as_u16() == 429 { "rate_limited" } else { "server_error" };
+                fallback_ndjson = Some(
+                    serde_json::to_string(&json!({
+                        "type": "fallback",
+                        "from": &model,
+                        "to": fb_model,
+                        "reason": reason,
+                    }))
+                    .unwrap_or_default(),
+                );
                 fallback_resp = Some(fb);
                 break;
             }
         }
-        fallback_resp.unwrap_or(resp)
+        (fallback_resp.unwrap_or(resp), fallback_ndjson)
     } else {
-        resp
+        (resp, None)
     };
 
     if !resp.status().is_success() {
@@ -336,6 +348,11 @@ pub async fn claude_chat_stream(
     let byte_stream = resp.bytes_stream();
 
     let ndjson_stream = async_stream::stream! {
+        // Emit fallback notification before streaming content (if model was downgraded)
+        if let Some(fb_line) = fallback_event {
+            yield Ok::<_, std::io::Error>(axum::body::Bytes::from(format!("{}\n", fb_line)));
+        }
+
         let mut sse_buffer = String::new();
         let mut total_tokens: u32 = 0;
         let mut output_chars: usize = 0;
@@ -534,6 +551,9 @@ async fn claude_chat_stream_with_tools(
                 break;
             }
 
+            let iteration_start = std::time::Instant::now();
+            let iteration_timeout = std::time::Duration::from_secs(60);
+
             let mut body = json!({
                 "model": &model,
                 "max_tokens": max_tokens,
@@ -723,6 +743,24 @@ async fn claude_chat_stream_with_tools(
                 }
             }
 
+            // Per-iteration timeout check after API streaming completes
+            if iteration_start.elapsed() >= iteration_timeout {
+                tracing::warn!(
+                    "Per-iteration timeout (60s) reached at iteration {} during API streaming",
+                    iteration
+                );
+                let _ = tx
+                    .send(
+                        serde_json::to_string(&json!({
+                            "token": format!("\n[Iteration {} timed out after 60s]", iteration),
+                            "done": true, "model": &model, "total_tokens": total_tokens,
+                        }))
+                        .unwrap_or_default(),
+                    )
+                    .await;
+                break;
+            }
+
             // After stream completes — check stop_reason
             if stop_reason == "tool_use" && !tool_uses.is_empty() {
                 let mut assistant_blocks: Vec<Value> = Vec::new();
@@ -732,7 +770,7 @@ async fn claude_chat_stream_with_tools(
                 assistant_blocks.extend(tool_uses.clone());
                 conversation.push(json!({ "role": "assistant", "content": assistant_blocks }));
 
-                // Execute each tool
+                // Execute each tool with heartbeat during execution
                 let mut tool_results: Vec<Value> = Vec::new();
                 for tu in &tool_uses {
                     let tool_name = tu.get("name").and_then(|n| n.as_str()).unwrap_or("");
@@ -740,51 +778,82 @@ async fn claude_chat_stream_with_tools(
                     let empty_input = json!({});
                     let tool_input = tu.get("input").unwrap_or(&empty_input);
 
-                    let (result, is_error) = if tool_name == "call_agent" {
-                        // Acquire A2A concurrency permit (max 5 concurrent delegations)
-                        match state_clone.a2a_semaphore.clone().acquire_owned().await {
-                            Err(_) => (
-                                "A2A delegation limit reached — semaphore closed".to_string(),
-                                true,
-                            ),
-                            Ok(_permit) => {
-                                // Agent-to-agent delegation — longer timeout (120s)
-                                match tokio::time::timeout(
-                                    std::time::Duration::from_secs(120),
-                                    execute_agent_call(&state_clone, tool_input, &wd, 0),
-                                )
-                                .await
-                                {
-                                    Ok(res) => res,
-                                    Err(_) => {
-                                        ("Agent delegation timed out after 120s".to_string(), true)
+                    // Spawn the actual tool execution as a future
+                    let tool_future = async {
+                        if tool_name == "call_agent" {
+                            // Acquire A2A concurrency permit (max 5 concurrent delegations)
+                            match state_clone.a2a_semaphore.clone().acquire_owned().await {
+                                Err(_) => (
+                                    "A2A delegation limit reached — semaphore closed".to_string(),
+                                    true,
+                                ),
+                                Ok(_permit) => {
+                                    // Agent-to-agent delegation — longer timeout (120s)
+                                    match tokio::time::timeout(
+                                        std::time::Duration::from_secs(120),
+                                        execute_agent_call(&state_clone, tool_input, &wd, 0),
+                                    )
+                                    .await
+                                    {
+                                        Ok(res) => res,
+                                        Err(_) => {
+                                            ("Agent delegation timed out after 120s".to_string(), true)
+                                        }
                                     }
                                 }
                             }
-                        }
-                    } else {
-                        let timeout = std::time::Duration::from_secs(TOOL_TIMEOUT_SECS);
-                        let executor = state_clone.tool_executor.with_working_directory(&wd);
-                        match tokio::time::timeout(
-                            timeout,
-                            executor.execute_with_state(tool_name, tool_input, &state_clone),
-                        )
-                        .await
-                        {
-                            Ok(res) => res,
-                            Err(_) => {
-                                tracing::warn!(
-                                    "Tool '{}' timed out after {}s",
-                                    tool_name,
-                                    TOOL_TIMEOUT_SECS
-                                );
-                                (
-                                    format!(
+                        } else {
+                            let timeout = std::time::Duration::from_secs(TOOL_TIMEOUT_SECS);
+                            let executor = state_clone.tool_executor.with_working_directory(&wd);
+                            match tokio::time::timeout(
+                                timeout,
+                                executor.execute_with_state(tool_name, tool_input, &state_clone),
+                            )
+                            .await
+                            {
+                                Ok(res) => res,
+                                Err(_) => {
+                                    tracing::warn!(
                                         "Tool '{}' timed out after {}s",
-                                        tool_name, TOOL_TIMEOUT_SECS
-                                    ),
-                                    true,
-                                )
+                                        tool_name,
+                                        TOOL_TIMEOUT_SECS
+                                    );
+                                    (
+                                        format!(
+                                            "Tool '{}' timed out after {}s",
+                                            tool_name, TOOL_TIMEOUT_SECS
+                                        ),
+                                        true,
+                                    )
+                                }
+                            }
+                        }
+                    };
+
+                    // Race tool execution against heartbeat interval
+                    let tool_start = std::time::Instant::now();
+                    let mut heartbeat_interval = tokio::time::interval(std::time::Duration::from_secs(10));
+                    heartbeat_interval.tick().await; // consume initial immediate tick
+                    tokio::pin!(tool_future);
+
+                    let (result, is_error) = loop {
+                        tokio::select! {
+                            res = &mut tool_future => {
+                                break res;
+                            }
+                            _ = heartbeat_interval.tick() => {
+                                let elapsed = tool_start.elapsed().as_secs();
+                                let _ = tx
+                                    .send(
+                                        serde_json::to_string(&json!({
+                                            "type": "heartbeat",
+                                            "elapsed_secs": elapsed,
+                                            "iteration": iteration,
+                                            "tool": tool_name,
+                                        }))
+                                        .unwrap_or_default(),
+                                    )
+                                    .await;
                             }
                         }
                     };
@@ -1258,6 +1327,7 @@ async fn execute_streaming_ws(
 
         // Fallback chain
         let resp = if !resp.status().is_success() && is_retryable_status(resp.status().as_u16()) {
+            let original_status = resp.status();
             let fallback_models = ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"];
             let mut fallback_resp = None;
             for fb_model in &fallback_models {
@@ -1267,13 +1337,23 @@ async fn execute_streaming_ws(
                 tracing::warn!(
                     "ws: {} returned {}, falling back to {}",
                     model,
-                    resp.status(),
+                    original_status,
                     fb_model
                 );
                 body["model"] = json!(fb_model);
                 if let Ok(fb) = send_to_anthropic(state, &body, 300).await
                     && fb.status().is_success()
                 {
+                    let reason = if original_status.as_u16() == 429 { "rate_limited" } else { "server_error" };
+                    ws_send(
+                        sender,
+                        &WsServerMessage::Fallback {
+                            from: model.clone(),
+                            to: fb_model.to_string(),
+                            reason: reason.to_string(),
+                        },
+                    )
+                    .await;
                     fallback_resp = Some(fb);
                     break;
                 }

@@ -34,6 +34,12 @@ initI18n({
         partnerSession: 'GeminiHydra Session ({{count}} messages)',
         readOnlyView: 'Read-only view from GeminiHydra',
       },
+      tags: {
+        add: 'Add tag',
+        addPlaceholder: 'Add tag...',
+        addLabel: 'Add tags (comma-separated)',
+        clearFilters: 'Clear filters',
+      },
     },
     pl: {
       home: {
@@ -58,6 +64,12 @@ initI18n({
         title: 'Czat Claude',
         partnerSession: 'Sesja GeminiHydra ({{count}} wiadomości)',
         readOnlyView: 'Widok tylko do odczytu z GeminiHydra',
+      },
+      tags: {
+        add: 'Dodaj tag',
+        addPlaceholder: 'Dodaj tag...',
+        addLabel: 'Dodaj tagi (oddzielone przecinkami)',
+        clearFilters: 'Wyczyść filtry',
       },
     },
   },

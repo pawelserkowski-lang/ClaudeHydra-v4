@@ -24,6 +24,7 @@ const AgentsView = lazy(() => import('@/features/agents/components/AgentsView'))
 const SettingsView = lazy(() => import('@/features/settings/components/SettingsView'));
 const LazyLogsView = lazy(() => import('@/features/logs/components/LogsView'));
 const LazyDelegationsView = lazy(() => import('@/features/delegations/components/DelegationsView'));
+const LazyAnalyticsView = lazy(() => import('@/features/analytics/components/AnalyticsView'));
 
 // ---------------------------------------------------------------------------
 // ViewRouter — maps the current view id to the correct lazy component
@@ -64,6 +65,14 @@ function ViewRouter() {
             fallback={<FeatureErrorFallback feature="Delegations" onRetry={() => window.location.reload()} />}
           >
             <LazyDelegationsView />
+          </ErrorBoundary>
+        );
+      case 'analytics':
+        return (
+          <ErrorBoundary
+            fallback={<FeatureErrorFallback feature="Analytics" onRetry={() => window.location.reload()} />}
+          >
+            <LazyAnalyticsView />
           </ErrorBoundary>
         );
     }
