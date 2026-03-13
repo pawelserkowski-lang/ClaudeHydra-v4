@@ -73,6 +73,50 @@ test.describe('Navigation', () => {
     // Skip this test.
   });
 
+  // ── Navigate to logs ────────────────────────────────────────────────
+
+  test('should navigate to logs via sidebar', async ({ page }) => {
+    await sidebar.navigateTo('logs');
+    await page.waitForTimeout(800); // Lazy-loaded view
+
+    // Logs view should render (no data-testid, so check for heading text)
+    const heading = page.locator('h1, h2').filter({ hasText: /logs/i });
+    if ((await heading.count()) > 0) {
+      await expect(heading.first()).toBeVisible();
+    }
+  });
+
+  // ── Navigate to delegations ────────────────────────────────────────
+
+  test('should navigate to delegations via sidebar', async ({ page }) => {
+    await sidebar.navigateTo('delegations');
+    await page.waitForTimeout(800);
+
+    // Delegations view should render without crashing
+    const bodyText = await page.textContent('body');
+    expect(bodyText!.length).toBeGreaterThan(0);
+  });
+
+  // ── Navigate to analytics ─────────────────────────────────────────
+
+  test('should navigate to analytics via sidebar', async ({ page }) => {
+    await sidebar.navigateTo('analytics');
+    await page.waitForTimeout(800);
+
+    // Analytics view should render without crashing
+    const bodyText = await page.textContent('body');
+    expect(bodyText!.length).toBeGreaterThan(0);
+  });
+
+  // ── All nav items visible ─────────────────────────────────────────
+
+  test('should show all 6 nav items', async ({ page }) => {
+    const navIds = ['home', 'chat', 'logs', 'delegations', 'analytics', 'settings'];
+    for (const id of navIds) {
+      await expect(sidebar.navButton(id)).toBeVisible();
+    }
+  });
+
   // ── Active nav highlight ────────────────────────────────────────────
 
   test('should highlight active nav item', async ({ page }) => {

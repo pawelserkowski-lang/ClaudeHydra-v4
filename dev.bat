@@ -5,6 +5,7 @@ set "LIB=C:\Users\BIURODOM\Desktop\JaskierWorkspace\jaskier-lib.bat"
 
 :: Init colors
 call "%LIB%" :init_colors
+call "%LIB%" :cleanup_mcp
 :: Kill previous instances
 taskkill /F /IM claudehydra-backend.exe >nul 2>&1
 title [Jaskier] ClaudeHydra v4 DEV

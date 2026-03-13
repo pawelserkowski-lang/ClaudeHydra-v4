@@ -2,7 +2,6 @@ pub mod audit;
 pub mod auth;
 pub mod browser_proxy;
 pub mod handlers;
-pub mod logs;
 pub mod mcp;
 pub mod model_registry;
 pub mod models;
@@ -19,49 +18,11 @@ pub mod tools;
 pub mod watchdog;
 
 use axum::Router;
-use axum::extract::DefaultBodyLimit;
-use axum::middleware;
 use axum::routing::{delete, get, patch, post};
-use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
+use jaskier_core::router_builder::{HydraRouterConfig, build_hydra_router, build_hydra_test_router};
 use utoipa::OpenApi;
-use utoipa_swagger_ui::SwaggerUi;
 
 use state::AppState;
-
-// ═══════════════════════════════════════════════════════════════════════
-//  Request correlation ID middleware — Jaskier Shared Pattern
-// ═══════════════════════════════════════════════════════════════════════
-
-/// Middleware that generates a UUID v4 correlation ID for each request.
-///
-/// - Adds it to the current tracing span as `request_id`
-/// - Returns it in the `X-Request-Id` response header
-/// - Accepts an incoming `X-Request-Id` header to propagate from upstream
-async fn request_id_middleware(
-    req: axum::http::Request<axum::body::Body>,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    // Use the incoming X-Request-Id if present, otherwise generate one
-    let request_id = req
-        .headers()
-        .get("x-request-id")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
-    // Add to current tracing span
-    tracing::Span::current().record("request_id", request_id.as_str());
-    tracing::debug!(request_id = %request_id, "request correlation ID assigned");
-
-    let mut response = next.run(req).await;
-
-    // Add X-Request-Id to response headers
-    if let Ok(header_value) = axum::http::HeaderValue::from_str(&request_id) {
-        response.headers_mut().insert("x-request-id", header_value);
-    }
-
-    response
-}
 
 // ── OpenAPI documentation ────────────────────────────────────────────────────
 
@@ -167,77 +128,116 @@ async fn request_id_middleware(
 pub struct ApiDoc;
 
 // ═══════════════════════════════════════════════════════════════════════
-//  Shared route registration — single source of truth for all endpoints
+//  Route group builders — CH-specific fragments
 // ═══════════════════════════════════════════════════════════════════════
 
-/// All public routes (no auth required).
-/// Includes health checks, OAuth flows, and browser proxy management.
-fn public_routes() -> Router<AppState> {
+/// CH primary auth routes — Anthropic OAuth (PKCE).
+///
+/// These are provided via `HydraRouterConfig.primary_auth_override` to replace
+/// the shared router's default Google OAuth handlers at `/api/auth/status`,
+/// `/api/auth/login`, and `/api/auth/logout`. The `/api/auth/callback` path
+/// (Anthropic PKCE callback) is CH-specific and has no conflict.
+fn ch_primary_auth_routes() -> Router<AppState> {
     Router::new()
-        .route("/api/health", get(handlers::health_check))
-        .route("/api/health/ready", get(handlers::readiness))
-        // Anthropic OAuth (PKCE)
+        // Anthropic OAuth PKCE — replaces shared Google OAuth at these paths
         .route("/api/auth/status", get(oauth::auth_status))
         .route("/api/auth/login", post(oauth::auth_login))
         .route("/api/auth/callback", post(oauth::auth_callback))
         .route("/api/auth/logout", post(oauth::auth_logout))
-        .route("/api/auth/mode", get(handlers::auth_mode))
-        // Google OAuth (public — must be accessible to complete auth flow)
+}
+
+/// CH WebSocket chat route (maps to `ws_route` config slot).
+fn ch_ws_route() -> Router<AppState> {
+    Router::new().route("/ws/chat", get(handlers::ws_chat))
+}
+
+/// CH streaming + non-streaming chat routes (maps to `execute_routes` config slot).
+/// The shared router applies `require_auth` and rate limiting to this group.
+fn ch_chat_routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/claude/chat/stream", post(handlers::claude_chat_stream))
+        .route("/api/claude/chat", post(handlers::claude_chat))
+}
+
+/// CH agents router — full agents CRUD + delegation monitoring (with auth).
+/// Passed as `agents_router` (auth is applied by the caller via `route_layer`).
+fn ch_agents_router(state: AppState) -> Router<AppState> {
+    Router::new()
         .route(
-            "/api/auth/google/status",
-            get(oauth_google::google_auth_status::<AppState>),
+            "/api/agents",
+            get(handlers::list_agents).post(handlers::create_agent),
         )
         .route(
-            "/api/auth/google/login",
-            post(oauth_google::google_auth_login::<AppState>),
+            "/api/agents/{id}",
+            get(handlers::get_agent)
+                .put(handlers::update_agent)
+                .delete(handlers::delete_agent),
+        )
+        .route("/api/agents/refresh", post(handlers::refresh_agents))
+        .route("/api/agents/delegations", get(handlers::list_delegations))
+        .route(
+            "/api/agents/delegations/stream",
+            get(handlers::delegations_stream),
+        )
+        .route_layer(axum::middleware::from_fn_with_state(
+            state,
+            auth::require_auth::<AppState>,
+        ))
+}
+
+/// CH files router (with auth).
+fn ch_files_router(state: AppState) -> Router<AppState> {
+    Router::new()
+        .route("/api/files/list", post(handlers::list_files))
+        .route("/api/files/browse", post(handlers::browse_directory))
+        .route_layer(axum::middleware::from_fn_with_state(
+            state,
+            auth::require_auth::<AppState>,
+        ))
+}
+
+/// CH system router — stats, admin, and API-key-auth routes.
+///
+/// Note: `/api/health`, `/api/health/ready`, `/api/health/detailed`, and
+/// `/api/auth/mode` are provided by `build_hydra_router` via `HasHealthState`
+/// handlers, so they are NOT registered here to avoid duplicate-route panics.
+fn ch_system_router(state: AppState) -> Router<AppState> {
+    // Protected system endpoints (require auth)
+    let protected = Router::new()
+        .route("/api/system/stats", get(handlers::system_stats))
+        .route("/api/admin/rotate-key", post(handlers::rotate_key))
+        .route(
+            "/api/admin/rate-limits",
+            get(rate_limits::list_rate_limits),
         )
         .route(
-            "/api/auth/google/redirect",
-            get(oauth_google::google_redirect::<AppState>),
+            "/api/admin/rate-limits/{endpoint_group}",
+            patch(rate_limits::update_rate_limit),
         )
-        .route(
-            "/api/auth/google/logout",
-            post(oauth_google::google_auth_logout::<AppState>),
-        )
-        .route(
-            "/api/auth/google/apikey",
-            post(oauth_google::google_save_api_key::<AppState>).delete(oauth_google::google_delete_api_key::<AppState>),
-        )
-        // GitHub OAuth (public — must be accessible to complete auth flow)
-        .route(
-            "/api/auth/github/status",
-            get(oauth_github::github_auth_status::<AppState>),
-        )
-        .route(
-            "/api/auth/github/login",
-            post(oauth_github::github_auth_login::<AppState>),
-        )
-        .route(
-            "/api/auth/github/callback",
-            post(oauth_github::github_auth_callback::<AppState>),
-        )
-        .route(
-            "/api/auth/github/logout",
-            post(oauth_github::github_auth_logout::<AppState>),
-        )
-        // Vercel OAuth (public — must be accessible to complete auth flow)
-        .route(
-            "/api/auth/vercel/status",
-            get(oauth_vercel::vercel_auth_status::<AppState>),
-        )
-        .route(
-            "/api/auth/vercel/login",
-            post(oauth_vercel::vercel_auth_login::<AppState>),
-        )
-        .route(
-            "/api/auth/vercel/callback",
-            post(oauth_vercel::vercel_auth_callback::<AppState>),
-        )
-        .route(
-            "/api/auth/vercel/logout",
-            post(oauth_vercel::vercel_auth_logout::<AppState>),
-        )
-        // Browser proxy management (public — no auth, proxy handles its own state)
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_auth::<AppState>,
+        ));
+
+    // API key auth required for metrics/audit
+    let api_key_auth = Router::new()
+        .route("/api/system/metrics", get(handlers::system_metrics))
+        .route("/api/system/audit", get(handlers::system_audit))
+        .route_layer(axum::middleware::from_fn_with_state(
+            state,
+            auth::require_api_key_auth,
+        ));
+
+    protected.merge(api_key_auth)
+}
+
+/// CH browser proxy routes (public, no auth).
+///
+/// Note: `/api/browser-proxy/history` is provided by `build_hydra_router`
+/// via the shared `browser_proxy_history` handler, so it is NOT registered
+/// here to avoid duplicate-route panics.
+fn ch_browser_proxy_routes() -> Router<AppState> {
+    Router::new()
         .route(
             "/api/browser-proxy/status",
             get(browser_proxy::proxy_status::<AppState>),
@@ -255,146 +255,11 @@ fn public_routes() -> Router<AppState> {
             "/api/browser-proxy/logout",
             delete(browser_proxy::proxy_logout::<AppState>),
         )
-        .route(
-            "/api/browser-proxy/history",
-            get(handlers::browser_proxy_history),
-        )
 }
 
-/// Streaming chat route (protected, separate for rate limiting in production).
-fn chat_stream_routes() -> Router<AppState> {
+/// CH OCR routes (protected — auth applied by the shared router's protected group).
+fn ch_ocr_routes() -> Router<AppState> {
     Router::new()
-        .route(
-            "/api/claude/chat/stream",
-            post(handlers::claude_chat_stream),
-        )
-}
-
-/// Non-streaming chat route (protected, separate for rate limiting in production).
-fn chat_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/claude/chat", post(handlers::claude_chat))
-}
-
-/// A2A delegation routes (protected, separate for rate limiting in production).
-fn a2a_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/agents/delegations", get(handlers::list_delegations))
-        .route(
-            "/api/agents/delegations/stream",
-            get(handlers::delegations_stream),
-        )
-}
-
-/// All other protected routes — system, admin, tokens, logs, agents, models,
-/// settings, sessions, MCP, OCR, prompt history.
-fn general_protected_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/system/stats", get(handlers::system_stats))
-        // Admin — hot-reload API keys
-        .route("/api/admin/rotate-key", post(handlers::rotate_key))
-        // Service tokens (Fly.io PAT, etc.) — protected
-        .route(
-            "/api/tokens",
-            get(service_tokens::list_tokens::<AppState>).post(service_tokens::store_token::<AppState>),
-        )
-        .route(
-            "/api/tokens/{service}",
-            delete(service_tokens::delete_token::<AppState>),
-        )
-        // Logs — backend log ring buffer
-        .route(
-            "/api/logs/backend",
-            get(logs::backend_logs::<AppState>).delete(logs::clear_backend_logs::<AppState>),
-        )
-        .route(
-            "/api/agents",
-            get(handlers::list_agents).post(handlers::create_agent),
-        )
-        .route(
-            "/api/agents/{id}",
-            get(handlers::get_agent)
-                .put(handlers::update_agent)
-                .delete(handlers::delete_agent),
-        )
-        .route("/api/agents/refresh", post(handlers::refresh_agents))
-        .route("/api/claude/models", get(handlers::claude_models))
-        .route("/api/models", get(model_registry::list_models))
-        .route("/api/models/refresh", post(model_registry::refresh_models))
-        .route("/api/models/pin", post(model_registry::pin_model))
-        .route(
-            "/api/models/pin/{use_case}",
-            delete(model_registry::unpin_model),
-        )
-        .route("/api/models/pins", get(model_registry::list_pins))
-        .route(
-            "/api/settings",
-            get(handlers::get_settings).post(handlers::update_settings),
-        )
-        .route("/api/settings/api-key", post(handlers::set_api_key))
-        // Sessions — shared generic handlers via jaskier_core::sessions
-        .route(
-            "/api/sessions",
-            get(handlers::list_sessions::<AppState>).post(handlers::create_session::<AppState>),
-        )
-        // Session search (literal path — precedes {id} wildcard)
-        .route("/api/sessions/search", get(handlers::search_sessions))
-        .route(
-            "/api/sessions/{id}",
-            get(handlers::get_session)
-                .patch(handlers::update_session::<AppState>)
-                .delete(handlers::delete_session::<AppState>),
-        )
-        .route(
-            "/api/sessions/{id}/working-directory",
-            patch(handlers::update_session_working_directory::<AppState>),
-        )
-        .route("/api/files/list", post(handlers::list_files))
-        .route("/api/files/browse", post(handlers::browse_directory))
-        // Session messages — local override (tool_interactions support)
-        .route(
-            "/api/sessions/{id}/messages",
-            post(handlers::add_session_message),
-        )
-        // Session tags
-        .route(
-            "/api/sessions/{id}/tags",
-            get(handlers::get_session_tags).post(handlers::add_session_tags),
-        )
-        .route(
-            "/api/sessions/{id}/tags/{tag}",
-            delete(handlers::delete_session_tag),
-        )
-        // All tags (global)
-        .route("/api/tags", get(handlers::list_all_tags))
-        .route(
-            "/api/sessions/{id}/generate-title",
-            post(handlers::generate_session_title::<AppState>),
-        )
-        // ── MCP routes (Phase 9 + 10) ────────────────────────────────
-        .route(
-            "/api/mcp/servers",
-            get(mcp::config::list_servers_handler).post(mcp::config::create_server_handler),
-        )
-        .route(
-            "/api/mcp/servers/{id}",
-            patch(mcp::config::update_server_handler).delete(mcp::config::delete_server_handler),
-        )
-        .route(
-            "/api/mcp/servers/{id}/connect",
-            post(mcp::config::connect_server_handler),
-        )
-        .route(
-            "/api/mcp/servers/{id}/disconnect",
-            post(mcp::config::disconnect_server_handler),
-        )
-        .route(
-            "/api/mcp/servers/{id}/tools",
-            get(mcp::config::list_server_tools_handler),
-        )
-        .route("/api/mcp/tools", get(mcp::config::list_all_tools_handler))
-        .route("/mcp", post(mcp::server::mcp_handler::<AppState>))
-        // OCR — text extraction from images and PDFs
         .route("/api/ocr", post(ocr::ocr))
         .route("/api/ocr/stream", post(ocr::ocr_stream))
         .route("/api/ocr/batch/stream", post(ocr::ocr_batch_stream))
@@ -403,208 +268,128 @@ fn general_protected_routes() -> Router<AppState> {
             "/api/ocr/history/{id}",
             get(ocr::ocr_history_item).delete(ocr::ocr_history_delete),
         )
-        // Prompt history — shared generic handlers via jaskier_core::sessions
+}
+
+/// CH-specific protected routes not covered by the shared router.
+/// The shared router's `app_protected_routes` slot — auth is applied by the builder.
+///
+/// Routes excluded here (handled by `build_hydra_router` shared logic):
+/// - `/api/models*`        — shared model registry handlers
+/// - `/api/logs/backend`   — shared log ring buffer handlers
+/// - `/api/tokens*`        — shared service token handlers
+/// - `/api/sessions*`      — shared `session_routes::<S>()` (list, CRUD, messages,
+///                           working-directory, generate-title, prompt-history)
+/// - `/mcp`                — shared MCP server endpoint
+/// - `/api/mcp/*`          — shared MCP config endpoints
+///
+/// CH-specific session extensions that ARE safe to add here (not in `session_routes`):
+/// - `/api/sessions/search`         — CH full-text search (not in shared session_routes)
+/// - `/api/sessions/{id}/tags*`     — CH session tagging (not in shared session_routes)
+/// - `/api/tags`                    — CH global tag listing
+fn ch_app_protected_routes() -> Router<AppState> {
+    Router::new()
+        // Claude model list (CH-specific — Anthropic models, not Google)
+        .route("/api/claude/models", get(handlers::claude_models))
+        // Session search (literal path, NOT in shared session_routes)
+        .route("/api/sessions/search", get(handlers::search_sessions))
+        // Session tags (NOT in shared session_routes)
         .route(
-            "/api/prompt-history",
-            get(handlers::list_prompt_history::<AppState>)
-                .post(handlers::add_prompt_history::<AppState>)
-                .delete(handlers::clear_prompt_history::<AppState>),
+            "/api/sessions/{id}/tags",
+            get(handlers::get_session_tags).post(handlers::add_session_tags),
         )
-        // Analytics — agent performance dashboard
+        .route(
+            "/api/sessions/{id}/tags/{tag}",
+            delete(handlers::delete_session_tag),
+        )
+        // Global tags listing (NOT in shared session_routes)
+        .route("/api/tags", get(handlers::list_all_tags))
+        // Settings API key endpoint (CH-specific Anthropic key storage,
+        // not in shared session_routes which only has /api/settings GET+PATCH)
+        .route("/api/settings/api-key", post(handlers::set_api_key))
+        // Analytics — agent performance dashboard (CH-specific)
         .route("/api/analytics/tokens", get(handlers::analytics_tokens))
         .route("/api/analytics/latency", get(handlers::analytics_latency))
         .route(
             "/api/analytics/success-rate",
             get(handlers::analytics_success_rate),
         )
-        .route(
-            "/api/analytics/top-tools",
-            get(handlers::analytics_top_tools),
-        )
+        .route("/api/analytics/top-tools", get(handlers::analytics_top_tools))
         .route("/api/analytics/cost", get(handlers::analytics_cost))
 }
 
-/// Routes that require API key authentication (system metrics/audit).
-fn api_key_auth_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/system/metrics", get(handlers::system_metrics))
-        .route("/api/system/audit", get(handlers::system_audit))
-}
-
-/// Extra routes: Prometheus metrics (public), v1 API aliases, WebSocket.
-fn extra_routes() -> Router<AppState> {
-    // ── Metrics endpoint (public, no auth) — shared handler from jaskier-core
-    let metrics = Router::new().route(
+/// Prometheus metrics endpoint (public, no auth).
+fn ch_metrics_router() -> Router<AppState> {
+    Router::new().route(
         "/api/metrics",
         get(jaskier_core::metrics::metrics_handler::<AppState>),
-    );
-
-    // ── API v1 prefix alias (mirrors /api routes for forward compat) ─
-    let v1_public = Router::new()
-        .route("/api/v1/health", get(handlers::health_check))
-        .route("/api/v1/health/ready", get(handlers::readiness))
-        .route("/api/v1/auth/mode", get(handlers::auth_mode));
-
-    // ── WebSocket route (auth via ?token query param, outside middleware) ─
-    let ws_routes = Router::new().route("/ws/chat", get(handlers::ws_chat));
-
-    metrics.merge(v1_public).merge(ws_routes)
+    )
 }
 
-/// Assemble the final `Router` from pre-built route groups + shared state.
-/// Adds Swagger UI, body limit, request correlation ID, and binds state.
-fn assemble_app(
-    state: AppState,
-    public: Router<AppState>,
-    protected: Router<AppState>,
-    api_key: Router<AppState>,
-    extra: Router<AppState>,
-) -> Router {
-    public
-        .merge(protected)
-        .merge(api_key)
-        .merge(extra)
-        // Swagger UI — no auth required
-        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
-        // 60 MB body limit — must be before .with_state() for Json extractor
-        .layer(DefaultBodyLimit::max(60 * 1024 * 1024))
-        // Request correlation ID — adds X-Request-Id header to every response
-        .layer(axum::middleware::from_fn(request_id_middleware))
-        .with_state(state)
+// ═══════════════════════════════════════════════════════════════════════
+//  HydraRouterConfig builder
+// ═══════════════════════════════════════════════════════════════════════
+
+fn build_ch_config(state: AppState) -> HydraRouterConfig<AppState> {
+    HydraRouterConfig {
+        // Primary auth override: Anthropic OAuth replaces shared Google OAuth
+        // at /api/auth/status, /api/auth/login, /api/auth/logout.
+        primary_auth_override: Some(ch_primary_auth_routes()),
+
+        // WebSocket streaming (Anthropic-native via claude_chat_stream fallback)
+        ws_route: ch_ws_route(),
+
+        // Streaming + non-streaming Claude chat (auth + rate limiting applied by builder)
+        execute_routes: ch_chat_routes(),
+
+        // Pre-built sub-routers (already have auth middleware)
+        agents_router: ch_agents_router(state.clone()),
+        files_router: ch_files_router(state.clone()),
+        system_router: ch_system_router(state.clone()),
+
+        // Browser proxy routes (public, no auth)
+        browser_proxy_routes: ch_browser_proxy_routes(),
+
+        // OCR routes (auth applied by shared router's protected group)
+        ocr_routes: ch_ocr_routes(),
+
+        // CH-specific protected routes (auth applied by builder)
+        app_protected_routes: ch_app_protected_routes(),
+
+        // CH has no ADK sidecar bridge
+        internal_tool_route: Router::new(),
+
+        // Prometheus metrics
+        metrics_router: ch_metrics_router(),
+
+        // OpenAPI spec
+        openapi: ApiDoc::openapi(),
+    }
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Public API
+// ═══════════════════════════════════════════════════════════════════════
 
 /// Build the application router with the given shared state.
 /// Extracted from `main()` so integration tests can construct the app
 /// without binding to a network port.
 ///
-/// Rate limits are loaded from `state.rate_limit_config` (populated from DB
-/// at startup with hardcoded fallbacks). Changes via the admin API take
-/// effect on next server restart.
+/// Uses `build_hydra_router` from jaskier-core as the foundation.
+/// CH-specific routes are injected via `HydraRouterConfig`:
+/// - `primary_auth_override`: Anthropic OAuth replaces shared Google OAuth at `/api/auth/*`
+/// - `execute_routes`: claude_chat + claude_chat_stream (with auth + rate limiting)
+/// - `agents_router`, `files_router`, `system_router`: CH-specific CRUD + admin
+/// - `app_protected_routes`: analytics, tags, settings/api-key, OCR, claude/models
 pub fn create_router(state: AppState) -> Router {
-    // ── #21 Per-endpoint rate limiting — DB-configurable ──────────────
-    let rl_cfg = &state.rate_limit_config;
-
-    let p_chat_stream = rl_cfg.get("chat_stream");
-    let p_chat = rl_cfg.get("chat");
-    let p_a2a = rl_cfg.get("a2a");
-    let p_default = rl_cfg.get("default");
-
-    // Build GovernorConfig from DB-loaded params
-    let gov_chat_stream = GovernorConfigBuilder::default()
-        .per_millisecond(p_chat_stream.interval_ms)
-        .burst_size(p_chat_stream.burst_size)
-        .finish()
-        .expect("rate limiter config: chat_stream");
-    let gov_chat = GovernorConfigBuilder::default()
-        .per_millisecond(p_chat.interval_ms)
-        .burst_size(p_chat.burst_size)
-        .finish()
-        .expect("rate limiter config: chat");
-    let gov_a2a = GovernorConfigBuilder::default()
-        .per_millisecond(p_a2a.interval_ms)
-        .burst_size(p_a2a.burst_size)
-        .finish()
-        .expect("rate limiter config: a2a");
-    let gov_default = GovernorConfigBuilder::default()
-        .per_millisecond(p_default.interval_ms)
-        .burst_size(p_default.burst_size)
-        .finish()
-        .expect("rate limiter config: default");
-
-    // Apply rate limiters to each route group (skip layer if disabled in DB)
-    let mut protected: Router<AppState> = Router::new();
-
-    if p_chat_stream.enabled {
-        protected = protected.merge(chat_stream_routes().layer(GovernorLayer::new(gov_chat_stream)));
-    } else {
-        protected = protected.merge(chat_stream_routes());
-    }
-
-    if p_chat.enabled {
-        protected = protected.merge(chat_routes().layer(GovernorLayer::new(gov_chat)));
-    } else {
-        protected = protected.merge(chat_routes());
-    }
-
-    if p_a2a.enabled {
-        protected = protected.merge(a2a_routes().layer(GovernorLayer::new(gov_a2a)));
-    } else {
-        protected = protected.merge(a2a_routes());
-    }
-
-    if p_default.enabled {
-        protected = protected.merge(general_protected_routes().layer(GovernorLayer::new(gov_default)));
-    } else {
-        protected = protected.merge(general_protected_routes());
-    }
-
-    // Admin rate-limits management endpoints (inside auth-protected group)
-    protected = protected
-        .route(
-            "/api/admin/rate-limits",
-            get(rate_limits::list_rate_limits),
-        )
-        .route(
-            "/api/admin/rate-limits/{endpoint_group}",
-            patch(rate_limits::update_rate_limit),
-        );
-
-    protected = protected.route_layer(middleware::from_fn_with_state(
-        state.clone(),
-        auth::require_auth::<AppState>,
-    ));
-
-    let gov_system = GovernorConfigBuilder::default()
-        .per_millisecond(p_default.interval_ms)
-        .burst_size(p_default.burst_size)
-        .finish()
-        .expect("rate limiter config: system");
-
-    let api_key = api_key_auth_routes()
-        .route_layer(middleware::from_fn_with_state(
-            state.clone(),
-            auth::require_api_key_auth,
-        ))
-        .layer(GovernorLayer::new(gov_system));
-
-    assemble_app(state, public_routes(), protected, api_key, extra_routes())
+    build_hydra_router(state.clone(), build_ch_config(state))
 }
 
 /// Test-only router — identical routes but **without** `GovernorLayer` rate
-/// limiting.  `tower_governor` extracts the peer IP via `ConnectInfo`, which
+/// limiting. `tower_governor` extracts the peer IP via `ConnectInfo`, which
 /// is absent in `oneshot()` integration tests, causing a blanket 500
-/// "Unable To Extract Key!" error.  Removing the layer keeps all handler
+/// "Unable To Extract Key!" error. Removing the layer keeps all handler
 /// logic intact while allowing pure in-memory tests.
 #[doc(hidden)]
 pub fn create_test_router(state: AppState) -> Router {
-    // All protected routes merged flat — no rate limiting
-    let protected = chat_stream_routes()
-        .merge(chat_routes())
-        .merge(a2a_routes())
-        .merge(general_protected_routes())
-        // Admin rate-limits management (also available in test router)
-        .route(
-            "/api/admin/rate-limits",
-            get(rate_limits::list_rate_limits),
-        )
-        .route(
-            "/api/admin/rate-limits/{endpoint_group}",
-            patch(rate_limits::update_rate_limit),
-        )
-        .route_layer(middleware::from_fn_with_state(
-            state.clone(),
-            auth::require_auth::<AppState>,
-        ));
-
-    let api_key = api_key_auth_routes()
-        .route_layer(middleware::from_fn_with_state(
-            state.clone(),
-            auth::require_api_key_auth,
-        ));
-
-    assemble_app(state, public_routes(), protected, api_key, extra_routes())
+    build_hydra_test_router(state.clone(), build_ch_config(state))
 }
-
-// ── Prometheus metrics — shared handler from jaskier_core::metrics ────────
-// See `jaskier_core::metrics::metrics_handler` + `HasMetricsState` trait impl
-// in `state.rs`. Route registered in `extra_routes()` above.

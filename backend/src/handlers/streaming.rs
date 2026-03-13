@@ -5,6 +5,10 @@
 //! - `claude_chat_stream_with_tools` — agentic tool_use loop with auto-fix
 //! - `google_chat_stream` — Gemini hybrid routing for streaming
 //! - `ws_chat` — WebSocket streaming with rich protocol (Start/Token/Iteration/ToolCall/ToolResult/Complete)
+//!
+//! BE-CH-003: NDJSON streaming now uses `jaskier_core::handlers::anthropic_streaming`
+//! shared handler with `HasAnthropicStreamingState` trait. WebSocket + A2A delegation
+//! remain CH-specific (different protocol / deeply coupled to CH state).
 
 use std::collections::HashMap;
 
@@ -19,21 +23,275 @@ use serde_json::{Value, json};
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 
-use crate::auth::validate_ws_token;
+use jaskier_core::auth::validate_ws_token;
+use jaskier_core::handlers::anthropic_streaming::{
+    self, AnthropicChatContext, AnthropicSseEvent, AnthropicSseParser, AnthropicToolDef,
+    HasAnthropicStreamingState, build_iteration_nudge, build_ndjson_response,
+    dynamic_max_iterations, parse_sse_lines, sanitize_api_error, tool_result_context_limit,
+    trim_conversation, truncate_for_context_with_limit as truncate_tool_output,
+};
+
 use crate::models::*;
 use crate::state::AppState;
-
-use jaskier_core::handlers::anthropic_streaming::{
-    build_iteration_nudge, build_ndjson_response, dynamic_max_iterations, sanitize_api_error,
-    tool_result_context_limit, trim_conversation,
-    truncate_for_context_with_limit as truncate_tool_output,
-};
 
 use super::prompt::{ChatContext, resolve_chat_context};
 use super::{
     TOOL_TIMEOUT_SECS, is_retryable_status, sanitize_json_strings, send_to_anthropic,
     truncate_for_context_with_limit,
 };
+
+// ═══════════════════════════════════════════════════════════════════════
+//  HasAnthropicStreamingState — trait impl for CH AppState
+// ═══════════════════════════════════════════════════════════════════════
+
+impl HasAnthropicStreamingState for AppState {
+    fn db(&self) -> &sqlx::PgPool {
+        &self.db
+    }
+
+    fn http_client(&self) -> &reqwest::Client {
+        &self.http_client
+    }
+
+    fn send_to_anthropic(
+        &self,
+        body: &Value,
+        timeout_secs: u64,
+    ) -> impl std::future::Future<Output = Result<reqwest::Response, (StatusCode, String)>> + Send
+    {
+        let state = self.clone();
+        let body = body.clone();
+        async move {
+            send_to_anthropic(&state, &body, timeout_secs)
+                .await
+                .map_err(|(status, Json(err_val))| {
+                    let msg = err_val
+                        .get("error")
+                        .and_then(|e| e.as_str())
+                        .unwrap_or("Unknown error")
+                        .to_string();
+                    (status, msg)
+                })
+        }
+    }
+
+    fn resolve_context(
+        &self,
+        _messages: &[Value],
+        _model_override: Option<&str>,
+        _session_id: Option<&str>,
+        _temperature: Option<f64>,
+        _max_tokens: Option<u32>,
+        _tools_enabled: bool,
+    ) -> impl std::future::Future<Output = AnthropicChatContext> + Send {
+        // This is called internally by the shared handler. For CH, we resolve
+        // context outside the trait (via resolve_chat_context) and pass it in.
+        // This default impl is a fallback that should not be called directly.
+        async {
+            AnthropicChatContext {
+                model: "claude-sonnet-4-6".to_string(),
+                max_tokens: 4096,
+                temperature: 0.7,
+                max_iterations: 15,
+                working_directory: String::new(),
+                session_id: None,
+                system_prompt: String::new(),
+            }
+        }
+    }
+
+    fn build_tool_definitions(
+        &self,
+    ) -> impl std::future::Future<Output = Vec<AnthropicToolDef>> + Send {
+        let state = self.clone();
+        async move {
+            state
+                .tool_executor
+                .tool_definitions_with_mcp(&state)
+                .await
+                .into_iter()
+                .map(|td| AnthropicToolDef {
+                    name: td.name,
+                    description: td.description,
+                    input_schema: td.input_schema,
+                })
+                .collect()
+        }
+    }
+
+    fn execute_tool(
+        &self,
+        name: &str,
+        input: &Value,
+        working_directory: &str,
+        _iteration: usize,
+    ) -> impl std::future::Future<Output = (String, bool)> + Send {
+        let state = self.clone();
+        let name = name.to_string();
+        let input = input.clone();
+        let wd = working_directory.to_string();
+        async move {
+            if name == "call_agent" {
+                // Acquire A2A concurrency permit (max 5 concurrent delegations)
+                match state.a2a_semaphore.clone().acquire_owned().await {
+                    Err(_) => (
+                        "A2A delegation limit reached — semaphore closed".to_string(),
+                        true,
+                    ),
+                    Ok(_permit) => {
+                        match tokio::time::timeout(
+                            std::time::Duration::from_secs(120),
+                            execute_agent_call(&state, &input, &wd, 0),
+                        )
+                        .await
+                        {
+                            Ok(res) => res,
+                            Err(_) => {
+                                ("Agent delegation timed out after 120s".to_string(), true)
+                            }
+                        }
+                    }
+                }
+            } else {
+                let timeout = std::time::Duration::from_secs(TOOL_TIMEOUT_SECS);
+                let executor = state.tool_executor.with_working_directory(&wd);
+                match tokio::time::timeout(
+                    timeout,
+                    executor.execute_with_state(&name, &input, &state),
+                )
+                .await
+                {
+                    Ok(res) => res,
+                    Err(_) => (
+                        format!("Tool '{}' timed out after {}s", name, TOOL_TIMEOUT_SECS),
+                        true,
+                    ),
+                }
+            }
+        }
+    }
+
+    fn tool_timeout_secs(&self) -> u64 {
+        TOOL_TIMEOUT_SECS
+    }
+
+    fn load_session_history(
+        &self,
+        session_id: &uuid::Uuid,
+    ) -> impl std::future::Future<Output = Vec<Value>> + Send {
+        let db = self.db.clone();
+        let sid = *session_id;
+        async move { load_session_history(&db, &sid).await }
+    }
+
+    fn filter_messages(&self, messages: &[Value]) -> Vec<Value> {
+        messages.to_vec()
+    }
+
+    fn sanitize_body(&self, body: &mut Value) {
+        sanitize_json_strings(body);
+    }
+
+    fn fallback_models(&self) -> Vec<String> {
+        vec![
+            "claude-sonnet-4-6".to_string(),
+            "claude-haiku-4-5-20251001".to_string(),
+        ]
+    }
+
+    fn is_retryable_status(&self, status: u16) -> bool {
+        is_retryable_status(status)
+    }
+
+    fn on_stream_complete(
+        &self,
+        model: &str,
+        _total_tokens: u32,
+        output_chars: usize,
+        prompt_len: usize,
+        latency_ms: u128,
+    ) -> impl std::future::Future<Output = ()> + Send {
+        let db = self.db.clone();
+        let state = self.clone();
+        let model = model.to_string();
+        async move {
+            // Token usage tracking — fire-and-forget
+            let latency = latency_ms.min(i32::MAX as u128) as i32;
+            let input_est = (prompt_len / 4) as i32;
+            let output_est = (output_chars / 4) as i32;
+            let tier = if model.contains("opus") {
+                "commander"
+            } else if model.contains("sonnet") {
+                "coordinator"
+            } else if model.contains("haiku") {
+                "executor"
+            } else if model.contains("flash") {
+                "flash"
+            } else {
+                "coordinator"
+            };
+            let m = model.clone();
+            let db_clone = db.clone();
+            tokio::spawn(async move {
+                let _ = sqlx::query(
+                    "INSERT INTO ch_agent_usage (agent_id, model, input_tokens, output_tokens, total_tokens, latency_ms, success, tier) \
+                     VALUES (NULL, $1, $2, $3, $4, $5, TRUE, $6)",
+                )
+                .bind(&m)
+                .bind(input_est)
+                .bind(output_est)
+                .bind(input_est + output_est)
+                .bind(latency)
+                .bind(tier)
+                .execute(&db_clone)
+                .await;
+            });
+
+            // Fire-and-forget: task completion notification
+            tokio::spawn(async move {
+                send_task_complete_notification(&state, &model).await;
+            });
+        }
+    }
+
+    fn on_tool_loop_complete(
+        &self,
+        model: &str,
+    ) -> impl std::future::Future<Output = ()> + Send {
+        let state = self.clone();
+        let model = model.to_string();
+        async move {
+            send_task_complete_notification(&state, &model).await;
+        }
+    }
+
+    fn auto_fix_enabled(&self) -> bool {
+        true
+    }
+
+    fn auto_fix_keywords(&self) -> &[&str] {
+        &[
+            "fix",
+            "napraw",
+            "zmian",
+            "popraw",
+            "zastosow",
+            "write_file",
+            "edit_file",
+            "zmieni",
+            "edytu",
+            "zapisa",
+        ]
+    }
+
+    fn forced_synthesis_enabled(&self) -> bool {
+        true
+    }
+
+    fn forced_synthesis_threshold(&self) -> usize {
+        100
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Post-task MCP notification (fire-and-forget)
@@ -51,7 +309,10 @@ async fn send_task_complete_notification(state: &AppState, model: &str) {
     });
     match state.mcp_client.call_tool(prefixed, &args).await {
         Ok(_) => tracing::debug!("Task completion notification sent via MCP"),
-        Err(e) => tracing::debug!("MCP notification not sent (server may not be connected): {}", e),
+        Err(e) => tracing::debug!(
+            "MCP notification not sent (server may not be connected): {}",
+            e
+        ),
     }
 }
 
@@ -233,6 +494,7 @@ fn filter_client_system_prompt(messages: &[ChatMessage]) -> Vec<Value> {
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Claude Streaming (SSE from Anthropic → NDJSON to frontend)
+//  BE-CH-003: Delegates to shared anthropic_streaming handler
 // ═══════════════════════════════════════════════════════════════════════
 
 /// POST /api/claude/chat/stream
@@ -261,208 +523,27 @@ pub async fn claude_chat_stream(
         return google_chat_stream(state, req, ctx).await;
     }
 
-    let model = ctx.model;
-    let max_tokens = ctx.max_tokens;
-    let system_prompt = ctx.system_prompt;
-
-    let messages: Vec<Value> = filter_client_system_prompt(&req.messages);
-
-    let mut body = json!({
-        "model": model,
-        "max_tokens": max_tokens,
-        "system": system_prompt,
-        "messages": messages,
-        "stream": true,
-    });
-
-    if let Some(temp) = req.temperature {
-        body["temperature"] = json!(temp);
-    }
-
-    sanitize_json_strings(&mut body);
-
-    let resp = send_to_anthropic(&state, &body, 300).await?;
-
-    // Fallback chain: if retryable error, try lighter model
-    let (resp, fallback_event) = if !resp.status().is_success() && is_retryable_status(resp.status().as_u16()) {
-        let original_status = resp.status();
-        let fallback_models = ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"];
-        let mut fallback_resp = None;
-        let mut fallback_ndjson: Option<String> = None;
-        for fb_model in &fallback_models {
-            if *fb_model == model {
-                continue;
-            }
-            tracing::warn!(
-                "claude_chat_stream: {} returned {}, falling back to {}",
-                model,
-                original_status,
-                fb_model
-            );
-            body["model"] = json!(fb_model);
-            if let Ok(fb) = send_to_anthropic(&state, &body, 300).await
-                && fb.status().is_success()
-            {
-                let reason = if original_status.as_u16() == 429 { "rate_limited" } else { "server_error" };
-                fallback_ndjson = Some(
-                    serde_json::to_string(&json!({
-                        "type": "fallback",
-                        "from": &model,
-                        "to": fb_model,
-                        "reason": reason,
-                    }))
-                    .unwrap_or_default(),
-                );
-                fallback_resp = Some(fb);
-                break;
-            }
-        }
-        (fallback_resp.unwrap_or(resp), fallback_ndjson)
-    } else {
-        (resp, None)
-    };
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let err_text = resp.text().await.unwrap_or_default();
-        tracing::error!(
-            "Anthropic API error after fallback chain (status={}): {}",
-            status,
-            &truncate_for_context_with_limit(&err_text, 500)
-        );
-        let safe_error = sanitize_api_error(&err_text);
-        return Err((
-            StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
-            Json(json!({ "error": safe_error })),
-        ));
-    }
-
-    // Convert Anthropic SSE stream into NDJSON
-    let model_for_done = model.clone();
-    let model_for_usage = model.clone();
-    let model_for_notify = model.clone();
-    let state_for_notify = state.clone();
-    let db_for_usage = state.db.clone();
-    let stream_start = std::time::Instant::now();
+    // ── Delegate to shared handler ──────────────────────────────────────
     let prompt_len = req.messages.iter().map(|m| m.content.len()).sum::<usize>();
-    let byte_stream = resp.bytes_stream();
+    let messages = filter_client_system_prompt(&req.messages);
 
-    let ndjson_stream = async_stream::stream! {
-        // Emit fallback notification before streaming content (if model was downgraded)
-        if let Some(fb_line) = fallback_event {
-            yield Ok::<_, std::io::Error>(axum::body::Bytes::from(format!("{}\n", fb_line)));
-        }
-
-        let mut sse_buffer = String::new();
-        let mut total_tokens: u32 = 0;
-        let mut output_chars: usize = 0;
-        let mut stream = byte_stream;
-
-        while let Some(chunk_result) = futures_util::StreamExt::next(&mut stream).await {
-            let chunk = match chunk_result {
-                Ok(bytes) => bytes,
-                Err(e) => {
-                    tracing::error!("Anthropic SSE stream error: {}", e);
-                    let err_line = serde_json::to_string(&json!({
-                        "token": "\n[Stream interrupted]",
-                        "done": true,
-                        "model": &model_for_done,
-                        "total_tokens": total_tokens,
-                    })).unwrap_or_default();
-                    yield Ok::<_, std::io::Error>(axum::body::Bytes::from(format!("{}\n", err_line)));
-                    break;
-                }
-            };
-
-            sse_buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-            // Safety: '\n' is ASCII — find() returns byte pos at char boundary
-            while let Some(newline_pos) = sse_buffer.find('\n') {
-                let line = sse_buffer[..newline_pos].trim().to_string();
-                sse_buffer = sse_buffer[newline_pos + 1..].to_string();
-
-                if line.is_empty() || line.starts_with(':') {
-                    continue;
-                }
-
-                if let Some(data) = line.strip_prefix("data: ") {
-                    if data == "[DONE]" { continue; }
-
-                    if let Ok(event) = serde_json::from_str::<Value>(data) {
-                        let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
-
-                        match event_type {
-                            "content_block_delta" => {
-                                let text = event.get("delta").and_then(|d| d.get("text")).and_then(|t| t.as_str()).unwrap_or("");
-                                if !text.is_empty() {
-                                    output_chars += text.len();
-                                    let ndjson_line = serde_json::to_string(&json!({
-                                        "token": text,
-                                        "done": false,
-                                    })).unwrap_or_default();
-                                    yield Ok::<_, std::io::Error>(axum::body::Bytes::from(format!("{}\n", ndjson_line)));
-                                }
-                            }
-                            "message_delta" => {
-                                if let Some(usage) = event.get("usage") {
-                                    total_tokens = usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                                }
-                            }
-                            "message_stop" => {
-                                let done_line = serde_json::to_string(&json!({
-                                    "token": "",
-                                    "done": true,
-                                    "model": &model_for_done,
-                                    "total_tokens": total_tokens,
-                                })).unwrap_or_default();
-                                yield Ok::<_, std::io::Error>(axum::body::Bytes::from(format!("{}\n", done_line)));
-
-                                // Token usage tracking — fire-and-forget
-                                let latency = stream_start.elapsed().as_millis().min(i32::MAX as u128) as i32;
-                                let input_est = (prompt_len / 4) as i32;
-                                let output_est = (output_chars / 4) as i32;
-                                let db = db_for_usage.clone();
-                                let m = model_for_usage.clone();
-                                let tier = if m.contains("opus") { "commander" }
-                                    else if m.contains("sonnet") { "coordinator" }
-                                    else if m.contains("haiku") { "executor" }
-                                    else if m.contains("flash") { "flash" }
-                                    else { "coordinator" };
-                                tokio::spawn(async move {
-                                    let _ = sqlx::query(
-                                        "INSERT INTO ch_agent_usage (agent_id, model, input_tokens, output_tokens, total_tokens, latency_ms, success, tier) \
-                                         VALUES (NULL, $1, $2, $3, $4, $5, TRUE, $6)",
-                                    )
-                                    .bind(&m)
-                                    .bind(input_est)
-                                    .bind(output_est)
-                                    .bind(input_est + output_est)
-                                    .bind(latency)
-                                    .bind(tier)
-                                    .execute(&db)
-                                    .await;
-                                });
-
-                                // Fire-and-forget: task completion notification
-                                let notify_state = state_for_notify.clone();
-                                let notify_model = model_for_notify.clone();
-                                tokio::spawn(async move {
-                                    send_task_complete_notification(&notify_state, &notify_model).await;
-                                });
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-        }
+    let shared_ctx = AnthropicChatContext {
+        model: ctx.model,
+        max_tokens: ctx.max_tokens,
+        temperature: ctx.temperature,
+        max_iterations: ctx.max_iterations.max(1) as usize,
+        working_directory: ctx.working_directory,
+        session_id: ctx.session_id,
+        system_prompt: ctx.system_prompt,
     };
 
-    Ok(build_ndjson_response(Body::from_stream(ndjson_stream)))
+    anthropic_streaming::anthropic_ndjson_stream_no_tools(&state, &shared_ctx, messages, prompt_len)
+        .await
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Claude Streaming with Tools (agentic tool_use loop)
+//  BE-CH-003: Delegates to shared anthropic_streaming handler
 // ═══════════════════════════════════════════════════════════════════════
 
 async fn claude_chat_stream_with_tools(
@@ -470,15 +551,11 @@ async fn claude_chat_stream_with_tools(
     req: ChatRequest,
 ) -> Result<Response, (StatusCode, Json<Value>)> {
     let ctx = resolve_chat_context(&state, &req).await;
-    let model = ctx.model;
-    let max_tokens = ctx.max_tokens;
-    let effective_temperature = ctx.temperature;
-    let wd = ctx.working_directory;
-    let system_prompt = ctx.system_prompt;
 
     // Dynamic iteration cap based on prompt complexity
     let prompt_len = req.messages.last().map(|m| m.content.len()).unwrap_or(0);
-    let max_tool_iterations: usize = dynamic_max_iterations(prompt_len).min(ctx.max_iterations.max(1) as usize);
+    let max_tool_iterations: usize =
+        dynamic_max_iterations(prompt_len).min(ctx.max_iterations.max(1) as usize);
 
     // Build initial messages — prefer DB history when session_id present
     let initial_messages: Vec<Value> = if let Some(ref sid) = ctx.session_id {
@@ -491,634 +568,24 @@ async fn claude_chat_stream_with_tools(
         filter_client_system_prompt(&req.messages)
     };
 
-    // Build tool definitions (includes MCP tools from connected servers)
-    let tool_defs: Vec<Value> = state
-        .tool_executor
-        .tool_definitions_with_mcp(&state)
-        .await
-        .into_iter()
-        .map(|td| {
-            json!({
-                "name": td.name,
-                "description": td.description,
-                "input_schema": td.input_schema,
-            })
-        })
-        .collect();
-
-    let (tx, rx) = tokio::sync::mpsc::channel::<String>(256);
-    let state_clone = state.clone();
-
-    tokio::spawn(async move {
-        let mut conversation: Vec<Value> = initial_messages;
-        let mut iteration: usize = 0;
-        let mut has_written_file = false;
-        let mut agent_text_len: usize = 0;
-        let mut full_text = String::new();
-        let execution_start = std::time::Instant::now();
-        let execution_timeout = std::time::Duration::from_secs(300);
-
-        loop {
-            iteration += 1;
-
-            if execution_start.elapsed() >= execution_timeout {
-                tracing::warn!(
-                    "Global execution timeout (300s) reached at iteration {}",
-                    iteration
-                );
-                let _ = tx
-                    .send(
-                        serde_json::to_string(&json!({
-                            "token": "\n[Execution timeout — 5 minutes reached]",
-                            "done": true, "model": &model, "total_tokens": 0,
-                        }))
-                        .unwrap_or_default(),
-                    )
-                    .await;
-                break;
-            }
-
-            if iteration > max_tool_iterations {
-                let _ = tx
-                    .send(
-                        serde_json::to_string(&json!({
-                            "token": "\n[Max tool iterations reached]",
-                            "done": true, "model": &model, "total_tokens": 0,
-                        }))
-                        .unwrap_or_default(),
-                    )
-                    .await;
-                break;
-            }
-
-            let iteration_start = std::time::Instant::now();
-            let iteration_timeout = std::time::Duration::from_secs(60);
-
-            let mut body = json!({
-                "model": &model,
-                "max_tokens": max_tokens,
-                "system": &system_prompt,
-                "messages": &conversation,
-                "tools": &tool_defs,
-                "stream": true,
-                "temperature": effective_temperature,
-            });
-
-            sanitize_json_strings(&mut body);
-
-            let resp = match send_to_anthropic(&state_clone, &body, 300).await {
-                Ok(r) => r,
-                Err((_, Json(err_val))) => {
-                    let raw_msg = err_val
-                        .get("error")
-                        .and_then(|e| e.as_str())
-                        .unwrap_or("Unknown error");
-                    tracing::error!("send_to_anthropic failed (tool loop): {}", raw_msg);
-                    let _ = tx
-                        .send(
-                            serde_json::to_string(&json!({
-                                "token": "\n[AI provider request failed]",
-                                "done": true, "model": &model, "total_tokens": 0,
-                            }))
-                            .unwrap_or_default(),
-                        )
-                        .await;
-                    break;
-                }
-            };
-
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let err_text = resp.text().await.unwrap_or_default();
-                tracing::error!(
-                    "Anthropic API error (status={}, iteration={}): {}",
-                    status,
-                    iteration,
-                    &truncate_for_context_with_limit(&err_text, 500)
-                );
-                let safe_error = sanitize_api_error(&err_text);
-                let _ = tx
-                    .send(
-                        serde_json::to_string(&json!({
-                            "token": format!("\n[{}]", safe_error),
-                            "done": true, "model": &model, "total_tokens": 0,
-                        }))
-                        .unwrap_or_default(),
-                    )
-                    .await;
-                break;
-            }
-
-            // Parse SSE stream — collect content blocks
-            let mut text_content = String::new();
-            let mut tool_uses: Vec<Value> = Vec::new();
-            let mut current_tool_id = String::new();
-            let mut current_tool_name = String::new();
-            let mut current_tool_input_json = String::new();
-            let mut in_tool_use = false;
-            let mut stop_reason = String::new();
-            let mut total_tokens: u32 = 0;
-
-            let mut byte_stream = resp.bytes_stream();
-            let mut raw_buf: Vec<u8> = Vec::new();
-
-            while let Some(chunk_result) = byte_stream.next().await {
-                let chunk = match chunk_result {
-                    Ok(bytes) => bytes,
-                    Err(_) => break,
-                };
-
-                raw_buf.extend_from_slice(&chunk);
-
-                while let Some(newline_pos) = raw_buf.iter().position(|&b| b == b'\n') {
-                    let line_bytes = raw_buf[..newline_pos].to_vec();
-                    raw_buf = raw_buf[newline_pos + 1..].to_vec();
-                    let line = String::from_utf8_lossy(&line_bytes).trim().to_string();
-
-                    if line.is_empty() || line.starts_with(':') {
-                        continue;
-                    }
-
-                    let data = match line.strip_prefix("data: ") {
-                        Some(d) if d != "[DONE]" => d,
-                        _ => continue,
-                    };
-
-                    let event: Value = match serde_json::from_str(data) {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
-
-                    let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
-
-                    match event_type {
-                        "content_block_start" => {
-                            let cb = event.get("content_block").unwrap_or(&Value::Null);
-                            let cb_type = cb.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                            if cb_type == "tool_use" {
-                                in_tool_use = true;
-                                current_tool_id = cb
-                                    .get("id")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                current_tool_name = cb
-                                    .get("name")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                current_tool_input_json.clear();
-                            }
-                        }
-                        "content_block_delta" => {
-                            let delta = event.get("delta").unwrap_or(&Value::Null);
-                            let delta_type =
-                                delta.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                            if delta_type == "text_delta" {
-                                let text = delta.get("text").and_then(|t| t.as_str()).unwrap_or("");
-                                if !text.is_empty() {
-                                    text_content.push_str(text);
-                                    full_text.push_str(text);
-                                    agent_text_len += text.len();
-                                    let _ = tx
-                                        .send(
-                                            serde_json::to_string(&json!({
-                                                "token": text, "done": false,
-                                            }))
-                                            .unwrap_or_default(),
-                                        )
-                                        .await;
-                                }
-                            } else if delta_type == "input_json_delta" {
-                                let partial = delta
-                                    .get("partial_json")
-                                    .and_then(|t| t.as_str())
-                                    .unwrap_or("");
-                                current_tool_input_json.push_str(partial);
-                            }
-                        }
-                        "content_block_stop" => {
-                            if in_tool_use {
-                                let tool_input: Value =
-                                    serde_json::from_str(&current_tool_input_json)
-                                        .unwrap_or(json!({}));
-                                let _ = tx
-                                    .send(
-                                        serde_json::to_string(&json!({
-                                            "type": "tool_call",
-                                            "tool_use_id": &current_tool_id,
-                                            "tool_name": &current_tool_name,
-                                            "tool_input": &tool_input,
-                                        }))
-                                        .unwrap_or_default(),
-                                    )
-                                    .await;
-                                tool_uses.push(json!({
-                                    "type": "tool_use",
-                                    "id": &current_tool_id,
-                                    "name": &current_tool_name,
-                                    "input": tool_input,
-                                }));
-                                in_tool_use = false;
-                            }
-                        }
-                        "message_delta" => {
-                            if let Some(sr) = event
-                                .get("delta")
-                                .and_then(|d| d.get("stop_reason"))
-                                .and_then(|s| s.as_str())
-                            {
-                                stop_reason = sr.to_string();
-                            }
-                            if let Some(usage) = event.get("usage") {
-                                total_tokens = usage
-                                    .get("output_tokens")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0)
-                                    as u32;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-
-            // Per-iteration timeout check after API streaming completes
-            if iteration_start.elapsed() >= iteration_timeout {
-                tracing::warn!(
-                    "Per-iteration timeout (60s) reached at iteration {} during API streaming",
-                    iteration
-                );
-                let _ = tx
-                    .send(
-                        serde_json::to_string(&json!({
-                            "token": format!("\n[Iteration {} timed out after 60s]", iteration),
-                            "done": true, "model": &model, "total_tokens": total_tokens,
-                        }))
-                        .unwrap_or_default(),
-                    )
-                    .await;
-                break;
-            }
-
-            // After stream completes — check stop_reason
-            if stop_reason == "tool_use" && !tool_uses.is_empty() {
-                let mut assistant_blocks: Vec<Value> = Vec::new();
-                if !text_content.is_empty() {
-                    assistant_blocks.push(json!({ "type": "text", "text": &text_content }));
-                }
-                assistant_blocks.extend(tool_uses.clone());
-                conversation.push(json!({ "role": "assistant", "content": assistant_blocks }));
-
-                // Execute each tool with heartbeat during execution
-                let mut tool_results: Vec<Value> = Vec::new();
-                for tu in &tool_uses {
-                    let tool_name = tu.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                    let tool_id = tu.get("id").and_then(|i| i.as_str()).unwrap_or("");
-                    let empty_input = json!({});
-                    let tool_input = tu.get("input").unwrap_or(&empty_input);
-
-                    // Spawn the actual tool execution as a future
-                    let tool_future = async {
-                        if tool_name == "call_agent" {
-                            // Acquire A2A concurrency permit (max 5 concurrent delegations)
-                            match state_clone.a2a_semaphore.clone().acquire_owned().await {
-                                Err(_) => (
-                                    "A2A delegation limit reached — semaphore closed".to_string(),
-                                    true,
-                                ),
-                                Ok(_permit) => {
-                                    // Agent-to-agent delegation — longer timeout (120s)
-                                    match tokio::time::timeout(
-                                        std::time::Duration::from_secs(120),
-                                        execute_agent_call(&state_clone, tool_input, &wd, 0),
-                                    )
-                                    .await
-                                    {
-                                        Ok(res) => res,
-                                        Err(_) => {
-                                            ("Agent delegation timed out after 120s".to_string(), true)
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            let timeout = std::time::Duration::from_secs(TOOL_TIMEOUT_SECS);
-                            let executor = state_clone.tool_executor.with_working_directory(&wd);
-                            match tokio::time::timeout(
-                                timeout,
-                                executor.execute_with_state(tool_name, tool_input, &state_clone),
-                            )
-                            .await
-                            {
-                                Ok(res) => res,
-                                Err(_) => {
-                                    tracing::warn!(
-                                        "Tool '{}' timed out after {}s",
-                                        tool_name,
-                                        TOOL_TIMEOUT_SECS
-                                    );
-                                    (
-                                        format!(
-                                            "Tool '{}' timed out after {}s",
-                                            tool_name, TOOL_TIMEOUT_SECS
-                                        ),
-                                        true,
-                                    )
-                                }
-                            }
-                        }
-                    };
-
-                    // Race tool execution against heartbeat interval
-                    let tool_start = std::time::Instant::now();
-                    let mut heartbeat_interval = tokio::time::interval(std::time::Duration::from_secs(10));
-                    heartbeat_interval.tick().await; // consume initial immediate tick
-                    tokio::pin!(tool_future);
-
-                    let (result, is_error) = loop {
-                        tokio::select! {
-                            res = &mut tool_future => {
-                                break res;
-                            }
-                            _ = heartbeat_interval.tick() => {
-                                let elapsed = tool_start.elapsed().as_secs();
-                                let _ = tx
-                                    .send(
-                                        serde_json::to_string(&json!({
-                                            "type": "heartbeat",
-                                            "elapsed_secs": elapsed,
-                                            "iteration": iteration,
-                                            "tool": tool_name,
-                                        }))
-                                        .unwrap_or_default(),
-                                    )
-                                    .await;
-                            }
-                        }
-                    };
-
-                    if !is_error && (tool_name == "write_file" || tool_name == "edit_file") {
-                        has_written_file = true;
-                    }
-
-                    let truncated_result = truncate_tool_output(&result, tool_result_context_limit(iteration as u32));
-
-                    let _ = tx
-                        .send(
-                            serde_json::to_string(&json!({
-                                "type": "tool_result",
-                                "tool_use_id": tool_id,
-                                "result": &result,
-                                "is_error": is_error,
-                            }))
-                            .unwrap_or_default(),
-                        )
-                        .await;
-
-                    tool_results.push(json!({
-                        "type": "tool_result",
-                        "tool_use_id": tool_id,
-                        "content": &truncated_result,
-                        "is_error": is_error,
-                    }));
-                }
-
-                conversation.push(json!({ "role": "user", "content": tool_results }));
-
-                // Sliding window: trim conversation to prevent unbounded growth
-                trim_conversation(&mut conversation);
-
-                // Iteration nudges
-                if let Some(nudge) = build_iteration_nudge(iteration as u32, max_tool_iterations as u32, &conversation) {
-                    conversation.push(json!({ "role": "user", "content": nudge }));
-                }
-
-                text_content.clear();
-                continue;
-            }
-
-            // Auto-fix phase
-            if !has_written_file && !full_text.is_empty() && agent_text_len > 50 {
-                let fix_keywords = [
-                    "fix",
-                    "napraw",
-                    "zmian",
-                    "popraw",
-                    "zastosow",
-                    "write_file",
-                    "edit_file",
-                    "zmieni",
-                    "edytu",
-                    "zapisa",
-                ];
-                let lower = full_text.to_lowercase();
-                let needs_fix = fix_keywords.iter().any(|kw| lower.contains(kw));
-
-                if needs_fix {
-                    tracing::info!(
-                        "Auto-fix phase — agent described changes but never wrote files"
-                    );
-                    let edit_tools: Vec<&Value> = tool_defs
-                        .iter()
-                        .filter(|td| {
-                            let name = td.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                            name == "edit_file" || name == "write_file"
-                        })
-                        .collect();
-
-                    if !edit_tools.is_empty() {
-                        conversation.push(json!({
-                            "role": "user",
-                            "content": "[SYSTEM: You described changes but never applied them. Use edit_file or write_file NOW to apply the changes you described. Do not explain — just make the edits.]"
-                        }));
-
-                        let fix_body = json!({
-                            "model": &model,
-                            "max_tokens": max_tokens,
-                            "system": &system_prompt,
-                            "messages": &conversation,
-                            "tools": &edit_tools,
-                            "stream": false,
-                        });
-
-                        if let Ok(fix_resp) = send_to_anthropic(&state_clone, &fix_body, 60).await
-                            && fix_resp.status().is_success()
-                            && let Ok(fix_json) = fix_resp.json::<Value>().await
-                            && let Some(content) =
-                                fix_json.get("content").and_then(|c| c.as_array())
-                        {
-                            for block in content {
-                                let block_type =
-                                    block.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                                if block_type == "tool_use" {
-                                    let fix_tool_name =
-                                        block.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                                    let empty_input = json!({});
-                                    let fix_tool_input = block.get("input").unwrap_or(&empty_input);
-                                    let fix_tool_id =
-                                        block.get("id").and_then(|i| i.as_str()).unwrap_or("");
-
-                                    let executor =
-                                        state_clone.tool_executor.with_working_directory(&wd);
-                                    let timeout = std::time::Duration::from_secs(TOOL_TIMEOUT_SECS);
-                                    let (result, is_error) = match tokio::time::timeout(
-                                        timeout,
-                                        executor.execute_with_state(
-                                            fix_tool_name,
-                                            fix_tool_input,
-                                            &state_clone,
-                                        ),
-                                    )
-                                    .await
-                                    {
-                                        Ok(res) => res,
-                                        Err(_) => {
-                                            (format!("Tool '{}' timed out", fix_tool_name), true)
-                                        }
-                                    };
-
-                                    let _ = tx
-                                        .send(
-                                            serde_json::to_string(&json!({
-                                                "type": "tool_call",
-                                                "tool_use_id": fix_tool_id,
-                                                "tool_name": fix_tool_name,
-                                                "tool_input": fix_tool_input,
-                                            }))
-                                            .unwrap_or_default(),
-                                        )
-                                        .await;
-                                    let _ = tx
-                                        .send(
-                                            serde_json::to_string(&json!({
-                                                "type": "tool_result",
-                                                "tool_use_id": fix_tool_id,
-                                                "result": &result,
-                                                "is_error": is_error,
-                                            }))
-                                            .unwrap_or_default(),
-                                        )
-                                        .await;
-
-                                    let _ = is_error;
-                                } else if block_type == "text"
-                                    && let Some(text) = block.get("text").and_then(|t| t.as_str())
-                                    && !text.is_empty()
-                                {
-                                    let _ = tx
-                                        .send(
-                                            serde_json::to_string(&json!({
-                                                "token": text, "done": false,
-                                            }))
-                                            .unwrap_or_default(),
-                                        )
-                                        .await;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Forced synthesis — if agent produced very little text
-            if agent_text_len < 100 && !full_text.is_empty() {
-                tracing::info!(
-                    "Forced synthesis — agent produced {}B text, requesting summary",
-                    agent_text_len
-                );
-                conversation.push(json!({ "role": "assistant", "content": &full_text }));
-                conversation.push(json!({
-                    "role": "user",
-                    "content": "[SYSTEM: Summarize what you did. Be concise but list all changes made.]"
-                }));
-
-                let synth_body = json!({
-                    "model": &model,
-                    "max_tokens": 1024_u32,
-                    "system": &system_prompt,
-                    "messages": &conversation,
-                    "stream": true,
-                });
-
-                if let Ok(synth_resp) = send_to_anthropic(&state_clone, &synth_body, 30).await
-                    && synth_resp.status().is_success()
-                {
-                    let mut synth_stream = synth_resp.bytes_stream();
-                    let mut synth_buf: Vec<u8> = Vec::new();
-                    while let Some(Ok(chunk)) = synth_stream.next().await {
-                        synth_buf.extend_from_slice(&chunk);
-                        while let Some(nl) = synth_buf.iter().position(|&b| b == b'\n') {
-                            let line_bytes = synth_buf[..nl].to_vec();
-                            synth_buf = synth_buf[nl + 1..].to_vec();
-                            let line = String::from_utf8_lossy(&line_bytes).trim().to_string();
-                            if let Some(data) = line.strip_prefix("data: ") {
-                                if data == "[DONE]" {
-                                    continue;
-                                }
-                                if let Ok(ev) = serde_json::from_str::<Value>(data)
-                                    && let Some(text) =
-                                        ev.pointer("/delta/text").and_then(|t| t.as_str())
-                                    && !text.is_empty()
-                                {
-                                    let _ = tx
-                                        .send(
-                                            serde_json::to_string(&json!({
-                                                "token": text, "done": false,
-                                            }))
-                                            .unwrap_or_default(),
-                                        )
-                                        .await;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // stop_reason == "end_turn" or other — emit done
-            let _ = tx
-                .send(
-                    serde_json::to_string(&json!({
-                        "token": "", "done": true, "model": &model, "total_tokens": total_tokens,
-                    }))
-                    .unwrap_or_default(),
-                )
-                .await;
-
-            // Fire-and-forget: send success notification via MCP ai-swarm-notifier
-            send_task_complete_notification(&state_clone, &model).await;
-
-            break;
-        }
-    });
-
-    // Convert channel receiver into a byte stream with SSE heartbeat
-    let ndjson_stream = async_stream::stream! {
-        let mut rx = rx;
-        let heartbeat_interval = std::time::Duration::from_secs(15);
-        loop {
-            tokio::select! {
-                msg = rx.recv() => {
-                    match msg {
-                        Some(line) => {
-                            yield Ok::<_, std::io::Error>(axum::body::Bytes::from(format!("{}\n", line)));
-                        }
-                        None => break,
-                    }
-                }
-                _ = tokio::time::sleep(heartbeat_interval) => {
-                    yield Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b": heartbeat\n\n"));
-                }
-            }
-        }
+    let shared_ctx = AnthropicChatContext {
+        model: ctx.model,
+        max_tokens: ctx.max_tokens,
+        temperature: ctx.temperature,
+        max_iterations: max_tool_iterations,
+        working_directory: ctx.working_directory,
+        session_id: ctx.session_id,
+        system_prompt: ctx.system_prompt,
     };
 
-    Ok(build_ndjson_response(Body::from_stream(ndjson_stream)))
+    // ── Delegate to shared handler ──────────────────────────────────────
+    anthropic_streaming::anthropic_ndjson_stream_with_tools(&state, shared_ctx, initial_messages)
+        .await
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 //  WebSocket Streaming — Jaskier Shared Pattern
+//  (Remains CH-specific: different WS protocol from OpenAI/Gemini handlers)
 // ═══════════════════════════════════════════════════════════════════════
 
 /// Send a `WsServerMessage` through the WebSocket sink.
@@ -1232,6 +699,14 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
 }
 
 /// Core WebSocket streaming execution with rich protocol.
+///
+/// This remains CH-specific because:
+/// - CH uses its own WsClientMessage/WsServerMessage types (different from jaskier-core)
+/// - CH WS handler supports `tools_enabled` toggle (vs OpenAI/Gemini always-tools)
+/// - CH WS has unique auto-fix phase and forced synthesis
+/// - CancellationToken integration is CH-specific
+///
+/// The Anthropic SSE parsing within WS uses the shared `AnthropicSseParser`.
 async fn execute_streaming_ws(
     sender: &mut SplitSink<WebSocket, WsMessage>,
     state: &AppState,
@@ -1269,7 +744,8 @@ async fn execute_streaming_ws(
 
     // Dynamic iteration cap
     let prompt_len = prompt.len();
-    let max_tool_iterations: usize = dynamic_max_iterations(prompt_len).min(ctx.max_iterations.max(1) as usize);
+    let max_tool_iterations: usize =
+        dynamic_max_iterations(prompt_len).min(ctx.max_iterations.max(1) as usize);
 
     // Send Start
     ws_send(
@@ -1326,7 +802,9 @@ async fn execute_streaming_ws(
         };
 
         // Fallback chain
-        let resp = if !resp.status().is_success() && is_retryable_status(resp.status().as_u16()) {
+        let resp = if !resp.status().is_success()
+            && is_retryable_status(resp.status().as_u16())
+        {
             let original_status = resp.status();
             let fallback_models = ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"];
             let mut fallback_resp = None;
@@ -1344,7 +822,11 @@ async fn execute_streaming_ws(
                 if let Ok(fb) = send_to_anthropic(state, &body, 300).await
                     && fb.status().is_success()
                 {
-                    let reason = if original_status.as_u16() == 429 { "rate_limited" } else { "server_error" };
+                    let reason = if original_status.as_u16() == 429 {
+                        "rate_limited"
+                    } else {
+                        "server_error"
+                    };
                     ws_send(
                         sender,
                         &WsServerMessage::Fallback {
@@ -1383,7 +865,7 @@ async fn execute_streaming_ws(
             return;
         }
 
-        // Parse SSE → Token messages
+        // Parse SSE → Token messages (using shared parser)
         let mut byte_stream = resp.bytes_stream();
         let mut raw_buf: Vec<u8> = Vec::new();
         let mut full_text = String::new();
@@ -1406,21 +888,8 @@ async fn execute_streaming_ws(
             };
             raw_buf.extend_from_slice(&chunk);
 
-            while let Some(nl) = raw_buf.iter().position(|&b| b == b'\n') {
-                let line_bytes = raw_buf[..nl].to_vec();
-                raw_buf = raw_buf[nl + 1..].to_vec();
-                let line = String::from_utf8_lossy(&line_bytes).trim().to_string();
-                if line.is_empty() || line.starts_with(':') {
-                    continue;
-                }
-                let data = match line.strip_prefix("data: ") {
-                    Some(d) if d != "[DONE]" => d,
-                    _ => continue,
-                };
-                let event: Value = match serde_json::from_str(data) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
+            let events = parse_sse_lines(&mut raw_buf);
+            for event in events {
                 let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
                 if event_type == "content_block_delta" {
                     let text = event
@@ -1458,6 +927,7 @@ async fn execute_streaming_ws(
     }
 
     // ── Tools-enabled path: agentic tool_use loop ───────────────────────
+    // Uses shared AnthropicSseParser for SSE parsing
 
     let tool_defs: Vec<Value> = state
         .tool_executor
@@ -1589,13 +1059,10 @@ async fn execute_streaming_ws(
             break;
         }
 
-        // Parse Anthropic SSE stream
+        // Parse Anthropic SSE stream using shared parser
+        let mut parser = AnthropicSseParser::new();
         let mut text_content = String::new();
         let mut tool_uses: Vec<Value> = Vec::new();
-        let mut current_tool_id = String::new();
-        let mut current_tool_name = String::new();
-        let mut current_tool_input_json = String::new();
-        let mut in_tool_use = false;
         let mut stop_reason = String::new();
         let mut _total_tokens: u32 = 0;
 
@@ -1613,105 +1080,48 @@ async fn execute_streaming_ws(
             };
             raw_buf.extend_from_slice(&chunk);
 
-            while let Some(nl) = raw_buf.iter().position(|&b| b == b'\n') {
-                let line_bytes = raw_buf[..nl].to_vec();
-                raw_buf = raw_buf[nl + 1..].to_vec();
-                let line = String::from_utf8_lossy(&line_bytes).trim().to_string();
-                if line.is_empty() || line.starts_with(':') {
-                    continue;
-                }
-                let data = match line.strip_prefix("data: ") {
-                    Some(d) if d != "[DONE]" => d,
-                    _ => continue,
-                };
-                let event: Value = match serde_json::from_str(data) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-                let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
-
-                match event_type {
-                    "content_block_start" => {
-                        let cb = event.get("content_block").unwrap_or(&Value::Null);
-                        let cb_type = cb.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                        if cb_type == "tool_use" {
-                            in_tool_use = true;
-                            current_tool_id = cb
-                                .get("id")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            current_tool_name = cb
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            current_tool_input_json.clear();
+            let sse_events = parse_sse_lines(&mut raw_buf);
+            for sse_json in sse_events {
+                let parsed = parser.parse_event(&sse_json);
+                for ev in parsed {
+                    match ev {
+                        AnthropicSseEvent::TextToken(text) => {
+                            text_content.push_str(&text);
+                            full_text.push_str(&text);
+                            agent_text_len += text.len();
+                            ws_send(
+                                sender,
+                                &WsServerMessage::Token {
+                                    content: text,
+                                },
+                            )
+                            .await;
                         }
-                    }
-                    "content_block_delta" => {
-                        let delta = event.get("delta").unwrap_or(&Value::Null);
-                        let delta_type = delta.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                        if delta_type == "text_delta" {
-                            let text = delta.get("text").and_then(|t| t.as_str()).unwrap_or("");
-                            if !text.is_empty() {
-                                text_content.push_str(text);
-                                full_text.push_str(text);
-                                agent_text_len += text.len();
-                                ws_send(
-                                    sender,
-                                    &WsServerMessage::Token {
-                                        content: text.to_string(),
-                                    },
-                                )
-                                .await;
-                            }
-                        } else if delta_type == "input_json_delta" {
-                            let partial = delta
-                                .get("partial_json")
-                                .and_then(|t| t.as_str())
-                                .unwrap_or("");
-                            current_tool_input_json.push_str(partial);
-                        }
-                    }
-                    "content_block_stop" => {
-                        if in_tool_use {
-                            let tool_input: Value =
-                                serde_json::from_str(&current_tool_input_json).unwrap_or(json!({}));
+                        AnthropicSseEvent::ToolUse { id, name, input } => {
                             ws_send(
                                 sender,
                                 &WsServerMessage::ToolCall {
-                                    name: current_tool_name.clone(),
-                                    args: tool_input.clone(),
+                                    name: name.clone(),
+                                    args: input.clone(),
                                     iteration,
                                 },
                             )
                             .await;
                             tool_uses.push(json!({
                                 "type": "tool_use",
-                                "id": &current_tool_id,
-                                "name": &current_tool_name,
-                                "input": tool_input,
+                                "id": &id,
+                                "name": &name,
+                                "input": input,
                             }));
-                            in_tool_use = false;
                         }
+                        AnthropicSseEvent::StopReason(sr) => {
+                            stop_reason = sr;
+                        }
+                        AnthropicSseEvent::TokenUsage(tokens) => {
+                            _total_tokens = tokens;
+                        }
+                        AnthropicSseEvent::MessageStop => {}
                     }
-                    "message_delta" => {
-                        if let Some(sr) = event
-                            .get("delta")
-                            .and_then(|d| d.get("stop_reason"))
-                            .and_then(|s| s.as_str())
-                        {
-                            stop_reason = sr.to_string();
-                        }
-                        if let Some(usage) = event.get("usage") {
-                            _total_tokens = usage
-                                .get("output_tokens")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0) as u32;
-                        }
-                    }
-                    _ => {}
                 }
             }
         }
@@ -1764,14 +1174,13 @@ async fn execute_streaming_ws(
                 let semaphore = state.a2a_semaphore.clone();
                 let handle = tokio::spawn(async move {
                     let (result, is_error) = if tool_name == "call_agent" {
-                        // Acquire A2A concurrency permit (max 5 concurrent delegations)
+                        // Acquire A2A concurrency permit
                         match semaphore.acquire_owned().await {
                             Err(_) => (
                                 "A2A delegation limit reached — semaphore closed".to_string(),
                                 true,
                             ),
                             Ok(_permit) => {
-                                // Agent-to-agent delegation — longer timeout (120s)
                                 match tokio::time::timeout(
                                     std::time::Duration::from_secs(120),
                                     execute_agent_call(&state_ref, &tool_input, &wd_ref, 0),
@@ -1779,9 +1188,10 @@ async fn execute_streaming_ws(
                                 .await
                                 {
                                     Ok(res) => res,
-                                    Err(_) => {
-                                        ("Agent delegation timed out after 120s".to_string(), true)
-                                    }
+                                    Err(_) => (
+                                        "Agent delegation timed out after 120s".to_string(),
+                                        true,
+                                    ),
                                 }
                             }
                         }
@@ -1849,7 +1259,8 @@ async fn execute_streaming_ws(
                         )
                         .await;
 
-                        let truncated = truncate_tool_output(&result, tool_result_context_limit(iteration));
+                        let truncated =
+                            truncate_tool_output(&result, tool_result_context_limit(iteration));
                         tool_results.push(json!({
                             "type": "tool_result",
                             "tool_use_id": &tool_id,
@@ -1860,7 +1271,6 @@ async fn execute_streaming_ws(
                     Err(e) => {
                         tracing::error!("Tool task panicked: {}", e);
                         tools_completed += 1;
-                        // Synthetic tool_result to maintain 1:1 tool_use→tool_result mapping
                         tool_results.push(json!({
                             "type": "tool_result",
                             "tool_use_id": &pending_tool_ids[handle_idx],
@@ -1873,11 +1283,15 @@ async fn execute_streaming_ws(
 
             conversation.push(json!({ "role": "user", "content": tool_results }));
 
-            // Sliding window: trim conversation to prevent unbounded growth
+            // Sliding window: trim conversation
             trim_conversation(&mut conversation);
 
             // Iteration nudges
-            if let Some(nudge) = build_iteration_nudge(iteration, max_tool_iterations as u32, &conversation) {
+            if let Some(nudge) = build_iteration_nudge(
+                iteration,
+                max_tool_iterations as u32,
+                &conversation,
+            ) {
                 conversation.push(json!({ "role": "user", "content": nudge }));
             }
 
@@ -1946,16 +1360,14 @@ async fn execute_streaming_ws(
                                 let timeout = std::time::Duration::from_secs(TOOL_TIMEOUT_SECS);
                                 let (result, is_error) = match tokio::time::timeout(
                                     timeout,
-                                    executor.execute_with_state(
-                                        fix_tool_name,
-                                        fix_tool_input,
-                                        state,
-                                    ),
+                                    executor.execute_with_state(fix_tool_name, fix_tool_input, state),
                                 )
                                 .await
                                 {
                                     Ok(res) => res,
-                                    Err(_) => (format!("Tool '{}' timed out", fix_tool_name), true),
+                                    Err(_) => {
+                                        (format!("Tool '{}' timed out", fix_tool_name), true)
+                                    }
                                 };
 
                                 ws_send(
@@ -2324,7 +1736,7 @@ pub(crate) async fn execute_agent_call(
 
             conversation.push(json!({ "role": "user", "content": tool_results }));
 
-            // Sliding window: trim conversation to prevent unbounded growth
+            // Sliding window: trim conversation
             trim_conversation(&mut conversation);
 
             if iter >= 6 {
@@ -2389,7 +1801,7 @@ async fn store_ws_messages(
     assistant_text: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO ch_messages (id, session_id, role, content, created_at) VALUES ($1, $2, 'user', $3, NOW())"
+        "INSERT INTO ch_messages (id, session_id, role, content, created_at) VALUES ($1, $2, 'user', $3, NOW())",
     )
     .bind(uuid::Uuid::new_v4())
     .bind(session_id)
@@ -2399,7 +1811,7 @@ async fn store_ws_messages(
 
     if !assistant_text.is_empty() {
         sqlx::query(
-            "INSERT INTO ch_messages (id, session_id, role, content, created_at) VALUES ($1, $2, 'assistant', $3, NOW())"
+            "INSERT INTO ch_messages (id, session_id, role, content, created_at) VALUES ($1, $2, 'assistant', $3, NOW())",
         )
         .bind(uuid::Uuid::new_v4())
         .bind(session_id)

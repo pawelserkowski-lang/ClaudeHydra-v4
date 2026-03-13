@@ -27,14 +27,16 @@ async fn health_has_correct_fields() {
     let response = app().oneshot(get("/api/health")).await.unwrap();
     let json = body_json(response).await;
 
-    // new_test() uses connect_lazy to a fake DB → SELECT 1 fails → "degraded"
+    // Shared health handler (HasHealthState) uses "ok"/"starting" status.
+    // new_test() does not call mark_ready() so status is "starting".
     let status = json["status"].as_str().unwrap();
     assert!(
-        status == "healthy" || status == "degraded",
+        status == "ok" || status == "starting",
         "unexpected health status: {status}"
     );
     assert_eq!(json["version"], "4.0.0");
-    assert_eq!(json["app"], "ClaudeHydra v4");
+    // app_name() returns "ClaudeHydra" (not "ClaudeHydra v4" — migrated to shared handler)
+    assert_eq!(json["app"], "ClaudeHydra");
     assert!(json["uptime_seconds"].is_u64());
     assert!(json["providers"].is_array());
     assert!(json.get("ollama_connected").is_none());
@@ -50,7 +52,10 @@ async fn auth_mode_returns_200() {
     assert_eq!(response.status(), StatusCode::OK);
 
     let json = body_json(response).await;
-    assert_eq!(json["mode"], "open");
+    // Shared auth_mode handler (HasHealthState) returns {"auth_required": bool}
+    // instead of the old {"mode": "open"/"protected"} format.
+    assert!(json["auth_required"].is_boolean());
+    assert_eq!(json["auth_required"], false); // new_test() has no AUTH_SECRET
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

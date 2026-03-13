@@ -113,16 +113,10 @@ async fn main() -> shuttle_axum::ShuttleAxum {
     dotenvy::dotenv().ok();
 
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required");
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(5)
-        .acquire_timeout(std::time::Duration::from_secs(3))
-        .idle_timeout(std::time::Duration::from_secs(600))
-        .max_lifetime(std::time::Duration::from_secs(1800))
-        .connect(&database_url)
+    let pool = jaskier_db::pool::create_pool(&database_url, jaskier_db::pool::PoolConfig::light())
         .await
         .expect("DB connection failed");
-    sqlx::migrate!("./migrations")
-        .run(&pool)
+    jaskier_db::pool::run_migrations(&pool, sqlx::migrate!("./migrations"))
         .await
         .expect("Migrations failed");
 
@@ -148,16 +142,11 @@ async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required");
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(5)
-        .acquire_timeout(std::time::Duration::from_secs(3))
-        .idle_timeout(std::time::Duration::from_secs(600))
-        .max_lifetime(std::time::Duration::from_secs(1800))
-        .connect(&database_url)
+    let pool = jaskier_db::pool::create_pool(&database_url, jaskier_db::pool::PoolConfig::light())
         .await
         .expect("DB connection failed");
     // Skip migrations if schema already exists (avoids checksum mismatch)
-    if let Err(e) = sqlx::migrate!("./migrations").run(&pool).await {
+    if let Err(e) = jaskier_db::pool::run_migrations(&pool, sqlx::migrate!("./migrations")).await {
         tracing::warn!("Migration skipped (schema likely exists): {}", e);
     }
 

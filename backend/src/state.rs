@@ -1,182 +1,145 @@
-// Jaskier Shared Pattern — state
+// Jaskier Shared Pattern — state (ARCH-001: BaseHydraState migration)
 // ClaudeHydra v4 - Application state
+//
+// Uses BaseHydraState from jaskier-hydra-state shared crate for all common
+// fields, constructor, and mechanical trait implementations.
+// CH-specific fields (tool_executor, rate_limit_config, agents with local
+// WitcherAgent type) are kept on the outer AppState struct.
 
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
 
 use sqlx::PgPool;
 use tokio::sync::RwLock;
 
-// Re-export log types from shared crate so main.rs and other modules can use `crate::state::LogEntry` etc.
-pub use jaskier_core::logs::{LogEntry, LogRingBuffer};
-// Re-export CircuitBreaker from shared crate.
-pub use jaskier_core::circuit_breaker::CircuitBreaker;
-// Re-export PKCE types from shared crate so other modules can use `crate::state::OAuthPkceState`.
-pub use jaskier_oauth::pkce::{OAUTH_STATE_TTL, OAuthPkceState};
-// Re-export SystemSnapshot from shared crate.
-pub use jaskier_tools::system_monitor::SystemSnapshot;
+use jaskier_hydra_state::{BaseHydraConfig, BaseHydraState};
 
-use crate::mcp::client::McpClientManager;
-use crate::model_registry::ModelCache;
+// ── Re-exports for backward compatibility ───────────────────────────────
+// Existing code (main.rs, handlers, streaming.rs, etc.) imports these from crate::state.
+pub use jaskier_hydra_state::{
+    CircuitBreaker, LogEntry, LogRingBuffer, ModelCache, OAuthPkceState,
+    RuntimeState, SystemSnapshot, OAUTH_STATE_TTL,
+};
+
+use std::time::Instant;
+
 use crate::models::WitcherAgent;
 use crate::tools::ToolExecutor;
 
-// ── Shared: RuntimeState ────────────────────────────────────────────────────
-/// Mutable runtime state (not persisted — lost on restart).
-pub struct RuntimeState {
-    pub api_keys: HashMap<String, String>,
-}
-
-// ── Shared: AppState (project-specific fields vary) ─────────────────────────
+// ── AppState ────────────────────────────────────────────────────────────────
 /// Central application state. Clone-friendly — PgPool and Arc are both Clone.
+///
+/// Wraps `BaseHydraState` (shared across all Hydras) and adds CH-specific fields:
+/// - `agents` — uses CH's local `WitcherAgent` type (has `model: String` field)
+/// - `tool_executor` — CH-specific tool execution engine
+/// - `rate_limit_config` — per-endpoint rate limit configuration
+/// - `http_client` — alias for `base.client` (backward compat field name)
+/// - `circuit_breaker` — alias for `base.gemini_circuit` (backward compat field name)
+/// - `a2a_task_tx` — CH uses `Sender<serde_json::Value>` (Quad Hydras use `Sender<()>`)
 #[derive(Clone)]
 pub struct AppState {
-    pub db: PgPool,
+    pub base: BaseHydraState,
+    // ── CH-specific fields (not in BaseHydraState) ──────────────────
+    /// Agents cache — CH uses local WitcherAgent type with `model` field.
     pub agents: Arc<RwLock<Vec<WitcherAgent>>>,
-    pub runtime: Arc<RwLock<RuntimeState>>,
-    pub model_cache: Arc<RwLock<ModelCache>>,
-    pub start_time: Instant,
-    pub http_client: reqwest::Client,
+    /// CH-specific tool executor (Anthropic tool definitions).
     pub tool_executor: Arc<ToolExecutor>,
-    /// Anthropic OAuth PKCE states keyed by state param (concurrent-safe, TTL 10min).
-    pub oauth_pkce: Arc<RwLock<HashMap<String, OAuthPkceState>>>,
-    /// Google OAuth PKCE states keyed by state param (concurrent-safe, TTL 10min).
-    pub google_oauth_pkce: Arc<RwLock<HashMap<String, OAuthPkceState>>>,
-    /// GitHub OAuth states keyed by state param (concurrent-safe, TTL 10min).
-    pub github_oauth_states: Arc<RwLock<HashMap<String, tokio::time::Instant>>>,
-    /// Vercel OAuth states keyed by state param (concurrent-safe, TTL 10min).
-    pub vercel_oauth_states: Arc<RwLock<HashMap<String, tokio::time::Instant>>>,
-    /// Runtime API keys map (mirrors `runtime.api_keys`) — required by `HasGoogleOAuthState`.
-    pub api_keys: Arc<RwLock<HashMap<String, String>>>,
-    /// `true` once startup_sync completes (or times out).
-    pub ready: Arc<AtomicBool>,
-    /// Cached system stats (CPU, memory) refreshed every 5s by background task.
-    pub system_monitor: Arc<RwLock<SystemSnapshot>>,
-    /// Optional auth secret from AUTH_SECRET env. None = dev mode (no auth).
-    pub auth_secret: Option<String>,
-    /// Circuit breaker for upstream Anthropic API — Jaskier Shared Pattern
-    pub circuit_breaker: Arc<CircuitBreaker>,
-    /// MCP client manager — connects to external MCP servers
-    pub mcp_client: Arc<McpClientManager>,
-    /// `false` when OAuth token was rejected by Gemini API (401/403).
-    /// Causes credential resolution to skip OAuth and use API key.
-    /// Reset to `true` on new OAuth login.
-    pub oauth_gemini_valid: Arc<AtomicBool>,
-    /// In-memory ring buffer for backend log entries (last 1000).
-    pub log_buffer: Arc<LogRingBuffer>,
-    /// Cached system prompts for agent warm pool (key: "{language}", value: system prompt).
-    pub prompt_cache: Arc<RwLock<HashMap<String, String>>>,
-    /// Cached browser proxy health status, updated by watchdog every 30s.
-    pub browser_proxy_status: Arc<RwLock<crate::browser_proxy::BrowserProxyStatus>>,
-    /// Ring buffer of proxy health status change events (last 50).
-    pub browser_proxy_history: Arc<crate::browser_proxy::ProxyHealthHistory>,
-    /// Broadcast channel for real-time A2A delegation updates.
-    pub a2a_task_tx: tokio::sync::broadcast::Sender<serde_json::Value>,
-    /// Semaphore limiting concurrent A2A delegations (max 5 system-wide).
-    pub a2a_semaphore: Arc<tokio::sync::Semaphore>,
     /// Per-endpoint rate limit configuration loaded from DB at startup.
     pub rate_limit_config: crate::rate_limits::RateLimitConfig,
+    // ── Backward-compatible field aliases ────────────────────────────
+    // These shadow BaseHydraState fields with different names so existing
+    // `state.http_client` / `state.circuit_breaker` field accesses still compile.
+    /// HTTP client — cloned from `base.client` for backward-compat field access.
+    pub http_client: reqwest::Client,
+    /// Circuit breaker for Anthropic API — cloned from `base.gemini_circuit`.
+    pub circuit_breaker: Arc<CircuitBreaker>,
+    /// Broadcast channel for A2A delegation updates (CH uses `Sender<Value>`).
+    pub a2a_task_tx: tokio::sync::broadcast::Sender<serde_json::Value>,
+    /// Unit broadcast channel required by `HasAgentState` / `HasA2aState` trait bounds
+    /// (shared router delegates `()` signals; CH's real A2A uses `Sender<Value>` above).
+    pub a2a_unit_tx: tokio::sync::broadcast::Sender<()>,
 }
 
-// ── Shared: readiness helpers ───────────────────────────────────────────────
+impl Deref for AppState {
+    type Target = BaseHydraState;
+    fn deref(&self) -> &BaseHydraState {
+        &self.base
+    }
+}
+
+// ── Constructor ─────────────────────────────────────────────────────────────
+
 impl AppState {
-    pub fn is_ready(&self) -> bool {
-        self.ready.load(Ordering::Relaxed)
+    pub async fn new(db: PgPool, log_buffer: Arc<LogRingBuffer>) -> Self {
+        let base = BaseHydraState::new(db.clone(), log_buffer, BaseHydraConfig {
+            app_name: "ClaudeHydra",
+            google_auth_table: "ch_google_auth",
+            agents_table: "ch_agents_config",
+            circuit_provider: "anthropic",
+            // ClaudeHydra uses Anthropic OAuth — env vars loaded below separately.
+            api_key_env_vars: &["ANTHROPIC_API_KEY"],
+        }).await;
+
+        // ── Inject legacy key names for backward compatibility ──────
+        // BaseHydraState inserts as "anthropic" / "google", but CH handlers
+        // look up "ANTHROPIC_API_KEY" / "GOOGLE_API_KEY" in runtime.api_keys.
+        {
+            let mut rt = base.runtime.write().await;
+            if let Some(key) = rt.api_keys.get("anthropic").cloned() {
+                rt.api_keys.insert("ANTHROPIC_API_KEY".to_string(), key);
+            }
+            if let Some(key) = rt.api_keys.get("google").cloned() {
+                rt.api_keys.insert("GOOGLE_API_KEY".to_string(), key);
+            }
+            let mut keys = base.api_keys.write().await;
+            *keys = rt.api_keys.clone();
+        }
+
+        // ── Load CH-specific agents (local WitcherAgent type) ───────
+        let agents = Arc::new(RwLock::new(load_agents_from_db(&base.db).await));
+
+        // ── Build tool executor ─────────────────────────────────────
+        let api_keys_snapshot = base.api_keys.read().await.clone();
+        let tool_executor = Arc::new(ToolExecutor::new(base.client.clone(), api_keys_snapshot));
+
+        // ── Load rate limit config ──────────────────────────────────
+        let rate_limit_config = crate::rate_limits::load_from_db(&base.db).await;
+
+        // ── CH-specific A2A broadcast (Sender<Value>, not Sender<()>) ──
+        let (a2a_task_tx, _) = tokio::sync::broadcast::channel(100);
+        // Unit broadcast required by HasAgentState / HasA2aState trait bounds
+        let (a2a_unit_tx, _) = tokio::sync::broadcast::channel(100);
+
+        // ── Backward-compat field aliases ───────────────────────────
+        let http_client = base.client.clone();
+        let circuit_breaker = base.gemini_circuit.clone();
+
+        Self {
+            base,
+            agents,
+            tool_executor,
+            rate_limit_config,
+            http_client,
+            circuit_breaker,
+            a2a_task_tx,
+            a2a_unit_tx,
+        }
     }
 
-    pub fn mark_ready(&self) {
-        self.ready.store(true, Ordering::Relaxed);
-        tracing::info!("Backend marked as READY");
-    }
+    pub fn is_ready(&self) -> bool { self.base.is_ready() }
+    pub fn mark_ready(&self) { self.base.mark_ready(); }
 
     /// Refresh agents list — loads from DB, falls back to hardcoded defaults.
     pub async fn refresh_agents(&self) {
-        let new_agents = load_agents_from_db(&self.db).await;
+        let new_agents = load_agents_from_db(&self.base.db).await;
         let count = new_agents.len();
         let mut lock = self.agents.write().await;
         *lock = new_agents;
         tracing::info!("Agents refreshed — {} agents loaded", count);
     }
-}
-
-impl AppState {
-    pub async fn new(db: PgPool, log_buffer: Arc<LogRingBuffer>) -> Self {
-        let mut api_keys = HashMap::new();
-        if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-            api_keys.insert("ANTHROPIC_API_KEY".to_string(), key);
-        }
-        if let Ok(key) = std::env::var("GOOGLE_API_KEY") {
-            api_keys.insert("GOOGLE_API_KEY".to_string(), key);
-        }
-
-        let auth_secret = std::env::var("AUTH_SECRET").ok().filter(|s| !s.is_empty());
-        if auth_secret.is_some() {
-            tracing::info!("AUTH_SECRET configured — authentication enabled");
-        } else {
-            tracing::info!("AUTH_SECRET not set — authentication disabled (dev mode)");
-        }
-
-        let agents = Arc::new(RwLock::new(load_agents_from_db(&db).await));
-
-        tracing::info!(
-            "AppState initialised — keys: {:?}",
-            api_keys.keys().collect::<Vec<_>>()
-        );
-
-        let http_client = reqwest::Client::builder()
-            .pool_max_idle_per_host(10)
-            .timeout(std::time::Duration::from_secs(120))
-            .connect_timeout(std::time::Duration::from_secs(5))
-            .build()
-            .expect("Failed to build HTTP client");
-
-        let tool_executor = Arc::new(ToolExecutor::new(http_client.clone(), api_keys.clone()));
-
-        let mcp_client = Arc::new(McpClientManager::new(db.clone(), http_client.clone()));
-
-        let (a2a_task_tx, _) = tokio::sync::broadcast::channel(100);
-
-        let api_keys_arc = Arc::new(RwLock::new(api_keys.clone()));
-
-        // Load rate limit config from DB (with hardcoded fallbacks)
-        let rate_limit_config = crate::rate_limits::load_from_db(&db).await;
-
-        Self {
-            db,
-            agents,
-            runtime: Arc::new(RwLock::new(RuntimeState { api_keys })),
-            api_keys: api_keys_arc,
-            model_cache: Arc::new(RwLock::new(ModelCache::new())),
-            start_time: Instant::now(),
-            http_client,
-            tool_executor,
-            oauth_pkce: Arc::new(RwLock::new(HashMap::new())),
-            google_oauth_pkce: Arc::new(RwLock::new(HashMap::new())),
-            github_oauth_states: Arc::new(RwLock::new(HashMap::new())),
-            vercel_oauth_states: Arc::new(RwLock::new(HashMap::new())),
-            ready: Arc::new(AtomicBool::new(false)),
-            system_monitor: Arc::new(RwLock::new(SystemSnapshot::default())),
-            auth_secret,
-            circuit_breaker: Arc::new(CircuitBreaker::new("anthropic")),
-            mcp_client,
-            oauth_gemini_valid: Arc::new(AtomicBool::new(true)),
-            log_buffer,
-            prompt_cache: Arc::new(RwLock::new(HashMap::new())),
-            browser_proxy_status: Arc::new(RwLock::new(
-                crate::browser_proxy::BrowserProxyStatus::default(),
-            )),
-            browser_proxy_history: Arc::new(crate::browser_proxy::ProxyHealthHistory::new(50)),
-            a2a_task_tx,
-            a2a_semaphore: Arc::new(tokio::sync::Semaphore::new(5)),
-            rate_limit_config,
-        }
-    }
 
     /// Test-only constructor — uses `connect_lazy` so no real DB is needed.
-    /// Only suitable for endpoints that don't issue SQL queries (or that
-    /// gracefully handle DB errors, e.g. `.ok()?`).
     #[doc(hidden)]
     pub fn new_test() -> Self {
         let agents = Arc::new(RwLock::new(init_witcher_agents()));
@@ -187,122 +150,88 @@ impl AppState {
             .expect("Failed to build HTTP client");
 
         let db = PgPool::connect_lazy("postgres://test@localhost:19999/test").expect("lazy pool");
-
+        let mcp_client = Arc::new(jaskier_hydra_state::McpClientManager::new(db.clone(), http_client.clone()));
+        let circuit_breaker = Arc::new(CircuitBreaker::new("anthropic"));
+        let (a2a_task_tx_base, _) = tokio::sync::broadcast::channel(100);
         let (a2a_task_tx, _) = tokio::sync::broadcast::channel(100);
+        let (a2a_unit_tx, _) = tokio::sync::broadcast::channel(100);
 
-        Self {
-            mcp_client: Arc::new(McpClientManager::new(db.clone(), http_client.clone())),
-            db,
-            agents,
-            runtime: Arc::new(RwLock::new(RuntimeState {
-                api_keys: HashMap::new(),
-            })),
+        let base = BaseHydraState {
+            db: db.clone(),
+            agents: Arc::new(RwLock::new(vec![])), // base agents unused by CH
+            runtime: Arc::new(RwLock::new(RuntimeState { api_keys: HashMap::new() })),
             api_keys: Arc::new(RwLock::new(HashMap::new())),
             model_cache: Arc::new(RwLock::new(ModelCache::new())),
-            start_time: Instant::now(),
-            http_client: http_client.clone(),
-            tool_executor: Arc::new(ToolExecutor::new(http_client, HashMap::new())),
+            start_time: std::time::Instant::now(),
+            client: http_client.clone(),
             oauth_pkce: Arc::new(RwLock::new(HashMap::new())),
+            system_monitor: Arc::new(RwLock::new(SystemSnapshot::default())),
+            ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            auth_secret: None,
+            gemini_circuit: circuit_breaker.clone(),
+            prompt_cache: Arc::new(RwLock::new(HashMap::new())),
+            a2a_cancel_tokens: Arc::new(RwLock::new(HashMap::new())),
+            oauth_gemini_valid: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            log_buffer: Arc::new(LogRingBuffer::new(1000)),
+            tool_defs_cache: Arc::new(std::sync::OnceLock::new()),
+            mcp_client,
             google_oauth_pkce: Arc::new(RwLock::new(HashMap::new())),
             github_oauth_states: Arc::new(RwLock::new(HashMap::new())),
             vercel_oauth_states: Arc::new(RwLock::new(HashMap::new())),
-            ready: Arc::new(AtomicBool::new(false)),
-            system_monitor: Arc::new(RwLock::new(SystemSnapshot::default())),
-            auth_secret: None,
-            circuit_breaker: Arc::new(CircuitBreaker::new("anthropic")),
-            oauth_gemini_valid: Arc::new(AtomicBool::new(true)),
-            log_buffer: Arc::new(LogRingBuffer::new(1000)),
-            prompt_cache: Arc::new(RwLock::new(HashMap::new())),
+            knowledge_api_url: None,
+            knowledge_auth_secret: None,
+            swarm_tx: tokio::sync::broadcast::channel(100).0,
+            a2a_task_tx: a2a_task_tx_base,
             browser_proxy_status: Arc::new(RwLock::new(
-                crate::browser_proxy::BrowserProxyStatus::default(),
+                jaskier_hydra_state::BrowserProxyStatus::default(),
             )),
-            browser_proxy_history: Arc::new(crate::browser_proxy::ProxyHealthHistory::new(50)),
-            a2a_task_tx,
+            browser_proxy_history: Arc::new(jaskier_hydra_state::ProxyHealthHistory::new(50)),
             a2a_semaphore: Arc::new(tokio::sync::Semaphore::new(5)),
-            // Test constructor uses hardcoded defaults (no DB available)
+            ws_semaphore: Arc::new(tokio::sync::Semaphore::new(20)),
+            api_key_env_vars: &["ANTHROPIC_API_KEY"],
+        };
+
+        Self {
+            base,
+            agents,
+            tool_executor: Arc::new(ToolExecutor::new(http_client.clone(), HashMap::new())),
             rate_limit_config: crate::rate_limits::RateLimitConfig { groups: std::collections::HashMap::new() },
+            http_client,
+            circuit_breaker,
+            a2a_task_tx,
+            a2a_unit_tx,
         }
     }
 }
 
-// ── jaskier-core trait implementations ───────────────────────────────────────
+// ── Mechanical trait delegations (12 of 13 base + 1 extra) ─────────────────
+// These are identical across all Hydra apps and delegate to self.base fields.
+// HasSessionsState is excluded because CH uses different table names and
+// generate_title_via_anthropic (not gemini).
+jaskier_hydra_state::delegate_trait_auth_secret!(AppState);
+jaskier_hydra_state::delegate_trait_log_buffer!(AppState);
+jaskier_hydra_state::delegate_trait_browser_proxy!(AppState);
+jaskier_hydra_state::delegate_trait_google_oauth!(AppState, "8082", "ch");
+jaskier_hydra_state::delegate_trait_model_registry!(AppState, "ch");
+jaskier_hydra_state::delegate_trait_watchdog!(AppState);
+jaskier_hydra_state::delegate_trait_github_oauth!(AppState, "ch");
+jaskier_hydra_state::delegate_trait_vercel_oauth!(AppState, "ch");
+jaskier_hydra_state::delegate_trait_service_tokens!(AppState, "ch");
+jaskier_hydra_state::delegate_trait_mcp!(AppState, "ch");
+jaskier_hydra_state::delegate_trait_tools!(AppState, "ch");
+jaskier_hydra_state::delegate_trait_knowledge_api!(AppState);
 
-impl jaskier_core::auth::HasAuthSecret for AppState {
-    fn auth_secret(&self) -> Option<&str> {
-        self.auth_secret.as_deref()
-    }
-}
+// Extra trait: Anthropic OAuth (CH-specific)
+jaskier_hydra_state::delegate_trait_anthropic_oauth!(AppState, "ch");
 
-impl jaskier_core::logs::HasLogBuffer for AppState {
-    fn log_buffer(&self) -> &Arc<LogRingBuffer> {
-        &self.log_buffer
-    }
-}
-
-// ── jaskier-oauth trait implementations ──────────────────────────────────────
-
-impl jaskier_oauth::anthropic::HasAnthropicOAuthState for AppState {
-    fn db(&self) -> &sqlx::PgPool { &self.db }
-    fn http_client(&self) -> &reqwest::Client { &self.http_client }
-    fn anthropic_oauth_pkce_states(&self) -> &Arc<RwLock<HashMap<String, OAuthPkceState>>> { &self.oauth_pkce }
-    fn anthropic_oauth_table(&self) -> &'static str { "ch_oauth_tokens" }
-}
-
-impl jaskier_oauth::google::HasGoogleOAuthState for AppState {
-    fn db(&self) -> &sqlx::PgPool { &self.db }
-    fn http_client(&self) -> &reqwest::Client { &self.http_client }
-    fn runtime_api_keys(&self) -> &Arc<RwLock<HashMap<String, String>>> { &self.api_keys }
-    fn oauth_pkce_states(&self) -> &Arc<RwLock<HashMap<String, OAuthPkceState>>> { &self.google_oauth_pkce }
-    fn oauth_gemini_valid(&self) -> &Arc<std::sync::atomic::AtomicBool> { &self.oauth_gemini_valid }
-    fn google_auth_table(&self) -> &'static str { "ch_google_auth" }
-    fn default_port(&self) -> &'static str { "8082" }
-}
-
-impl jaskier_oauth::github::HasGitHubOAuthState for AppState {
-    fn db(&self) -> &sqlx::PgPool { &self.db }
-    fn http_client(&self) -> &reqwest::Client { &self.http_client }
-    fn github_oauth_states(&self) -> &Arc<RwLock<HashMap<String, tokio::time::Instant>>> { &self.github_oauth_states }
-    fn github_oauth_table(&self) -> &'static str { "ch_oauth_github" }
-}
-
-impl jaskier_oauth::vercel::HasVercelOAuthState for AppState {
-    fn db(&self) -> &sqlx::PgPool { &self.db }
-    fn http_client(&self) -> &reqwest::Client { &self.http_client }
-    fn vercel_oauth_states(&self) -> &Arc<RwLock<HashMap<String, tokio::time::Instant>>> { &self.vercel_oauth_states }
-    fn vercel_oauth_table(&self) -> &'static str { "ch_oauth_vercel" }
-}
-
-impl jaskier_oauth::service_tokens::HasServiceTokensState for AppState {
-    fn db(&self) -> &sqlx::PgPool { &self.db }
-    fn service_tokens_table(&self) -> &'static str { "ch_service_tokens" }
-}
-
-impl jaskier_browser::browser_proxy::HasBrowserProxyState for AppState {
-    fn http_client(&self) -> &reqwest::Client { &self.http_client }
-    fn browser_proxy_status(&self) -> &Arc<RwLock<jaskier_browser::browser_proxy::BrowserProxyStatus>> {
-        &self.browser_proxy_status
-    }
-}
-
-impl jaskier_core::model_registry::HasModelRegistryState for AppState {
-    fn model_cache(&self) -> &Arc<RwLock<crate::model_registry::ModelCache>> { &self.model_cache }
-    fn anthropic_api_key(&self) -> Option<String> {
-        self.api_keys.try_read().ok()?.get("ANTHROPIC_API_KEY").cloned()
-    }
-    fn model_pins_table(&self) -> &'static str { "ch_model_pins" }
-    fn settings_table(&self) -> &'static str { "ch_settings" }
-    fn audit_log_table(&self) -> &'static str { "ch_audit_log" }
-}
-
-// ── jaskier-core metrics trait implementation ─────────────────────────────
-
+// ── HasMetricsState — manual impl (CH overrides a2a_agent_column/error_filter)
 impl jaskier_core::metrics::HasMetricsState for AppState {
-    fn metrics_db(&self) -> &sqlx::PgPool { &self.db }
+    fn metrics_db(&self) -> &sqlx::PgPool { &self.base.db }
 
-    fn metrics_start_time(&self) -> std::time::Instant { self.start_time }
+    fn metrics_start_time(&self) -> std::time::Instant { self.base.start_time }
 
     async fn metrics_snapshot(&self) -> jaskier_core::metrics::MetricsSnapshot {
-        let snap = self.system_monitor.read().await;
+        let snap = self.base.system_monitor.read().await;
         jaskier_core::metrics::MetricsSnapshot {
             cpu_usage_percent: snap.cpu_usage_percent,
             memory_used_mb: snap.memory_used_mb,
@@ -323,24 +252,51 @@ impl jaskier_core::metrics::HasMetricsState for AppState {
     }
 }
 
-impl jaskier_browser::watchdog::HasWatchdogState for AppState {
-    fn browser_proxy_status(&self) -> &Arc<RwLock<jaskier_browser::browser_proxy::BrowserProxyStatus>> {
-        &self.browser_proxy_status
+// ── HasSessionsState — manual impl (CH uses different table names + Anthropic title gen)
+impl jaskier_core::sessions::HasSessionsState for AppState {
+    fn db(&self) -> &sqlx::PgPool { &self.base.db }
+
+    // ── Table names ──────────────────────────────────────────────────────
+    // CH uses "ch_messages" (not "ch_chat_messages" like Quad Hydras).
+    fn sessions_table(&self) -> &'static str { "ch_sessions" }
+    fn messages_table(&self) -> &'static str { "ch_messages" }
+    fn settings_table(&self) -> &'static str { "ch_settings" }
+    fn memory_table(&self) -> &'static str { "ch_memories" }
+    fn knowledge_nodes_table(&self) -> &'static str { "ch_knowledge_nodes" }
+    fn knowledge_edges_table(&self) -> &'static str { "ch_knowledge_edges" }
+    fn prompt_history_table(&self) -> &'static str { "ch_prompt_history" }
+    fn ratings_table(&self) -> &'static str { "ch_ratings" }
+    fn audit_log_table(&self) -> &'static str { "ch_audit_log" }
+
+    // ── Delegated operations ─────────────────────────────────────────────
+
+    async fn log_audit_entry(
+        &self,
+        action: &str,
+        data: serde_json::Value,
+        ip: Option<&str>,
+    ) {
+        crate::audit::log_audit(&self.base.db, action, data, ip).await;
     }
-    fn browser_proxy_history(&self) -> &Arc<jaskier_browser::browser_proxy::ProxyHealthHistory> {
-        &self.browser_proxy_history
+
+    async fn get_best_model_id(&self, _use_case: &str) -> String {
+        // ClaudeHydra uses Anthropic models — return coordinator tier default
+        let cache = self.base.model_cache.read().await;
+        // Iterate all provider buckets and find the best sonnet model
+        for models in cache.models.values() {
+            if let Some(m) = models.iter().find(|m| m.id.contains("sonnet")) {
+                return m.id.clone();
+            }
+        }
+        "claude-sonnet-4-6".to_string()
+    }
+
+    async fn generate_title_with_ai(&self, first_message: &str) -> Option<String> {
+        jaskier_core::sessions::generate_title_via_anthropic(self, first_message).await
     }
 }
 
-// ── jaskier-core MCP trait implementations ───────────────────────────────
-
-impl jaskier_core::mcp::config::HasMcpState for AppState {
-    fn db(&self) -> &sqlx::PgPool { &self.db }
-    fn auth_secret_is_some(&self) -> bool { self.auth_secret.is_some() }
-    fn mcp_client(&self) -> &Arc<crate::mcp::client::McpClientManager> { &self.mcp_client }
-    fn mcp_servers_table(&self) -> &'static str { "ch_mcp_servers" }
-    fn mcp_tools_table(&self) -> &'static str { "ch_mcp_discovered_tools" }
-}
+// ── HasMcpServerState — app-specific (CH version, name, tool_executor) ──────
 
 impl jaskier_core::mcp::server::HasMcpServerState for AppState {
     fn mcp_server_name(&self) -> &'static str { "ClaudeHydra" }
@@ -365,12 +321,12 @@ impl jaskier_core::mcp::server::HasMcpServerState for AppState {
             })
         }).collect::<Vec<_>>())
     }
-    fn mcp_model_cache(&self) -> &Arc<RwLock<crate::model_registry::ModelCache>> { &self.model_cache }
-    fn mcp_start_time(&self) -> std::time::Instant { self.start_time }
-    fn mcp_is_ready(&self) -> bool { self.is_ready() }
+    fn mcp_model_cache(&self) -> &Arc<RwLock<crate::model_registry::ModelCache>> { &self.base.model_cache }
+    fn mcp_start_time(&self) -> std::time::Instant { self.base.start_time }
+    fn mcp_is_ready(&self) -> bool { self.base.is_ready() }
 
     async fn mcp_system_snapshot_json(&self) -> serde_json::Value {
-        let snap = self.system_monitor.read().await;
+        let snap = self.base.system_monitor.read().await;
         serde_json::json!({
             "cpu_usage_percent": snap.cpu_usage_percent,
             "memory_used_mb": snap.memory_used_mb,
@@ -409,100 +365,34 @@ impl jaskier_core::mcp::server::HasMcpServerState for AppState {
     }
 }
 
-// ── jaskier-core sessions trait implementation ───────────────────────────────
+// ── HasAnthropicCredential — CH uses Anthropic OAuth + API key ──────────────
 
-impl jaskier_core::sessions::HasSessionsState for AppState {
-    fn db(&self) -> &sqlx::PgPool { &self.db }
+impl jaskier_core::sessions::HasAnthropicCredential for AppState {
+    fn http_client(&self) -> &reqwest::Client { &self.http_client }
 
-    // ── Table names ──────────────────────────────────────────────────────
-    fn sessions_table(&self) -> &'static str { "ch_sessions" }
-    fn messages_table(&self) -> &'static str { "ch_messages" }
-    fn settings_table(&self) -> &'static str { "ch_settings" }
-    fn memory_table(&self) -> &'static str { "ch_memories" }
-    fn knowledge_nodes_table(&self) -> &'static str { "ch_knowledge_nodes" }
-    fn knowledge_edges_table(&self) -> &'static str { "ch_knowledge_edges" }
-    fn prompt_history_table(&self) -> &'static str { "ch_prompt_history" }
-    fn ratings_table(&self) -> &'static str { "ch_ratings" }
-    fn audit_log_table(&self) -> &'static str { "ch_audit_log" }
-
-    // ── Delegated operations ─────────────────────────────────────────────
-
-    async fn log_audit_entry(
-        &self,
-        action: &str,
-        data: serde_json::Value,
-        ip: Option<&str>,
-    ) {
-        crate::audit::log_audit(&self.db, action, data, ip).await;
-    }
-
-    async fn get_best_model_id(&self, _use_case: &str) -> String {
-        // ClaudeHydra uses Anthropic models — return coordinator tier default
-        let cache = self.model_cache.read().await;
-        // Iterate all provider buckets and find the best sonnet model
-        for models in cache.models.values() {
-            if let Some(m) = models.iter().find(|m| m.id.contains("sonnet")) {
-                return m.id.clone();
+    async fn get_anthropic_credential(&self) -> Option<(String, bool)> {
+        // 1. Try Anthropic OAuth token from DB
+        if let Some(token) = crate::oauth::get_valid_access_token(self).await {
+            return Some((token, true));
+        }
+        // 2. Try runtime state (hot-loaded API key)
+        {
+            let rt = self.base.runtime.read().await;
+            if let Some(key) = rt.api_keys.get("ANTHROPIC_API_KEY")
+                && !key.is_empty()
+            {
+                return Some((key.clone(), false));
             }
         }
-        "claude-sonnet-4-6".to_string()
-    }
-
-    async fn generate_title_with_ai(&self, first_message: &str) -> Option<String> {
-        use serde_json::json;
-
-        let snippet: &str = if first_message.len() > 500 {
-            let end = first_message
-                .char_indices()
-                .take_while(|(i, _)| *i < 500)
-                .last()
-                .map(|(i, c)| i + c.len_utf8())
-                .unwrap_or(500.min(first_message.len()));
-            &first_message[..end]
-        } else {
-            first_message
-        };
-
-        let body = json!({
-            "model": "claude-haiku-4-5-20251001",
-            "max_tokens": 64,
-            "messages": [{
-                "role": "user",
-                "content": format!(
-                    "Generate a concise 3-7 word title for a chat that starts with this message. \
-                     Return ONLY the title text, no quotes, no explanation.\n\nMessage: {}",
-                    snippet
-                )
-            }]
-        });
-
-        let resp = crate::handlers::send_to_anthropic(self, &body, 15).await.ok()?;
-
-        if !resp.status().is_success() {
-            tracing::error!("generate_title_with_ai: Anthropic API returned {}", resp.status());
-            return None;
-        }
-
-        let json_resp: serde_json::Value = resp.json().await.ok()?;
-        let raw_title = json_resp
-            .get("content")
-            .and_then(|c| c.get(0))
-            .and_then(|c0| c0.get("text"))
-            .and_then(|t| t.as_str())
-            .unwrap_or("");
-        let raw_title = raw_title.trim().trim_matches('"').trim();
-
-        if raw_title.is_empty() {
-            tracing::warn!(
-                "generate_title_with_ai: Anthropic response missing text, response keys: {:?}",
-                json_resp.as_object().map(|o| o.keys().collect::<Vec<_>>())
-            );
-            return None;
-        }
-
-        Some(raw_title.to_string())
+        // 3. Try env var
+        std::env::var("ANTHROPIC_API_KEY")
+            .ok()
+            .filter(|k| !k.is_empty())
+            .map(|k| (k, false))
     }
 }
+
+// ── CH-specific agent helpers ───────────────────────────────────────────────
 
 /// Load agents from `ch_agents_config` table. Falls back to hardcoded defaults
 /// when the table doesn't exist yet or is empty.
@@ -538,92 +428,202 @@ fn model_for_tier(tier: &str) -> &'static str {
     }
 }
 
+/// Build default agent roster from shared jaskier-core list, converting to CH's
+/// local `WitcherAgent` type (which includes a `model` field based on tier).
 fn init_witcher_agents() -> Vec<WitcherAgent> {
-    let defs: &[(&str, &str, &str, &str)] = &[
-        (
-            "Geralt",
-            "Security",
-            "Commander",
-            "Master witcher and security specialist — hunts vulnerabilities like monsters",
-        ),
-        (
-            "Yennefer",
-            "Architecture",
-            "Commander",
-            "Powerful sorceress of system architecture — designs elegant magical structures",
-        ),
-        (
-            "Vesemir",
-            "Testing",
-            "Commander",
-            "Veteran witcher mentor — rigorously tests and validates all operations",
-        ),
-        (
-            "Triss",
-            "Data",
-            "Coordinator",
-            "Skilled sorceress of data management — weaves information with precision",
-        ),
-        (
-            "Jaskier",
-            "Documentation",
-            "Coordinator",
-            "Legendary bard — chronicles every detail with flair and accuracy",
-        ),
-        (
-            "Ciri",
-            "Performance",
-            "Coordinator",
-            "Elder Blood carrier — optimises performance with dimensional speed",
-        ),
-        (
-            "Dijkstra",
-            "Strategy",
-            "Coordinator",
-            "Spymaster strategist — plans operations with cunning intelligence",
-        ),
-        (
-            "Lambert",
-            "DevOps",
-            "Executor",
-            "Bold witcher — executes deployments and infrastructure operations",
-        ),
-        (
-            "Eskel",
-            "Backend",
-            "Executor",
-            "Steady witcher — builds and maintains robust backend services",
-        ),
-        (
-            "Regis",
-            "Research",
-            "Executor",
-            "Scholarly higher vampire — researches and analyses with ancient wisdom",
-        ),
-        (
-            "Zoltan",
-            "Frontend",
-            "Executor",
-            "Dwarven warrior — forges powerful and resilient frontend interfaces",
-        ),
-        (
-            "Philippa",
-            "Monitoring",
-            "Executor",
-            "All-seeing sorceress — monitors systems with her magical owl familiar",
-        ),
-    ];
-
-    defs.iter()
-        .enumerate()
-        .map(|(i, (name, role, tier, desc))| WitcherAgent {
-            id: format!("agent-{:03}", i + 1),
-            name: name.to_string(),
-            role: role.to_string(),
-            tier: tier.to_string(),
-            status: "active".to_string(),
-            description: desc.to_string(),
-            model: model_for_tier(tier).to_string(),
+    jaskier_core::models::default_agent_roster()
+        .into_iter()
+        .map(|shared| WitcherAgent {
+            model: model_for_tier(&shared.tier).to_string(),
+            id: shared.id,
+            name: shared.name,
+            role: shared.role,
+            tier: shared.tier,
+            status: shared.status,
+            description: shared.description,
         })
         .collect()
+}
+
+// ── HasHealthState — required by HydraState supertrait (router_builder) ─────
+//
+// CH provides its own health/readiness handlers (handlers::health_check, handlers::readiness)
+// via the agents_router / app_protected_routes config slots. This trait impl
+// satisfies the HydraState bound without routing through the shared health handlers.
+
+impl jaskier_core::handlers::system::HasHealthState for AppState {
+    fn version(&self) -> &'static str { env!("CARGO_PKG_VERSION") }
+    fn app_name(&self) -> &'static str { "ClaudeHydra" }
+    fn start_time(&self) -> Instant { self.base.start_time }
+    fn is_ready(&self) -> bool { self.base.is_ready() }
+    fn has_auth_secret(&self) -> bool { self.base.auth_secret.is_some() }
+
+    fn api_keys_snapshot(&self) -> std::collections::HashMap<String, String> {
+        self.base.api_keys.try_read().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    fn google_models_snapshot(&self) -> Vec<jaskier_core::model_registry::ModelInfo> {
+        self.base.model_cache
+            .try_read()
+            .map(|c| c.models.get("google").cloned().unwrap_or_default())
+            .unwrap_or_default()
+    }
+
+    fn system_stats_snapshot(&self) -> jaskier_core::handlers::system::SystemStatsSnapshot {
+        let snap = self.base.system_monitor.try_read();
+        match snap {
+            Ok(s) => jaskier_core::handlers::system::SystemStatsSnapshot {
+                cpu_usage_percent: s.cpu_usage_percent,
+                memory_used_mb: s.memory_used_mb,
+                memory_total_mb: s.memory_total_mb,
+                platform: s.platform.clone(),
+            },
+            Err(_) => jaskier_core::handlers::system::SystemStatsSnapshot {
+                cpu_usage_percent: 0.0,
+                memory_used_mb: 0.0,
+                memory_total_mb: 0.0,
+                platform: std::env::consts::OS.to_string(),
+            },
+        }
+    }
+
+    async fn browser_proxy_json(&self) -> Option<serde_json::Value> {
+        if !crate::browser_proxy::is_enabled() {
+            return None;
+        }
+        let status = self.base.browser_proxy_status.read().await.clone();
+        serde_json::to_value(status).ok()
+    }
+
+    fn browser_proxy_history_snapshot(&self, limit: usize) -> (Vec<serde_json::Value>, usize) {
+        let events = self.base.browser_proxy_history.recent(limit);
+        let total = self.base.browser_proxy_history.len();
+        let json_events = events
+            .into_iter()
+            .filter_map(|e| serde_json::to_value(e).ok())
+            .collect();
+        (json_events, total)
+    }
+}
+
+// ── HasAgentState — required by HydraState supertrait (router_builder) ──────
+//
+// CH provides its own agent handlers (handlers::agents::*) via the agents_router
+// config slot. This trait impl satisfies the HydraState bound. The `base.agents`
+// field holds `jaskier_core::models::WitcherAgent` (the shared type) which the
+// shared router's classify / CRUD handlers use. CH's custom agents (with `model`)
+// are in `self.agents` and served by CH's own route group.
+
+impl jaskier_core::handlers::agents::HasAgentState for AppState {
+    fn db(&self) -> &sqlx::PgPool { &self.base.db }
+
+    fn agents(&self) -> &Arc<RwLock<Vec<jaskier_core::models::WitcherAgent>>> {
+        &self.base.agents
+    }
+
+    fn a2a_task_tx(&self) -> &tokio::sync::broadcast::Sender<()> {
+        &self.a2a_unit_tx
+    }
+
+    fn agent_table_prefix(&self) -> &'static str { "ch" }
+
+    async fn refresh_agents(&self) {
+        // Refresh base agents (shared WitcherAgent type used by shared router)
+        let new_agents = match sqlx::query_as::<_, jaskier_core::models::WitcherAgent>(
+            "SELECT * FROM ch_agents ORDER BY created_at ASC",
+        )
+        .fetch_all(&self.base.db)
+        .await
+        {
+            Ok(rows) if !rows.is_empty() => rows,
+            _ => jaskier_core::models::default_agent_roster(),
+        };
+        let mut lock = self.base.agents.write().await;
+        *lock = new_agents;
+        // Also refresh CH-specific agents (local WitcherAgent with `model` field)
+        self.refresh_agents().await;
+    }
+}
+
+// ── HasA2aState — required by HydraState supertrait (router_builder) ────────
+//
+// CH does not use the A2A protocol (it has its own delegation system via
+// `/api/agents/delegations`). This minimal stub impl satisfies the trait bound
+// so `build_hydra_router` compiles. The A2A routes added by the shared router
+// (/a2a/message/send etc.) are unreachable in production since CH's frontend
+// does not call them.
+
+impl jaskier_ai_modules::a2a::HasA2aState for AppState {
+    type Agent = jaskier_core::models::WitcherAgent;
+
+    fn agents(&self) -> &Arc<RwLock<Vec<jaskier_core::models::WitcherAgent>>> {
+        &self.base.agents
+    }
+
+    fn a2a_app_name(&self) -> &str { "ClaudeHydra" }
+    fn a2a_app_url(&self) -> &str { "http://localhost:8082" }
+    fn a2a_app_version(&self) -> &str { env!("CARGO_PKG_VERSION") }
+
+    fn a2a_semaphore(&self) -> &Arc<tokio::sync::Semaphore> { &self.base.a2a_semaphore }
+    fn a2a_task_tx(&self) -> &tokio::sync::broadcast::Sender<()> { &self.a2a_unit_tx }
+    fn a2a_cancel_tokens(&self) -> &Arc<RwLock<std::collections::HashMap<String, tokio_util::sync::CancellationToken>>> {
+        &self.base.a2a_cancel_tokens
+    }
+
+    fn send_swarm_notification(&self, agent_id: &str, content: String) {
+        let _ = self.base.swarm_tx.send(jaskier_core::models::AgentMessage {
+            agent_id: agent_id.to_string(),
+            content,
+            is_final: false,
+        });
+    }
+
+    async fn circuit_check(&self) -> Result<(), String> {
+        self.base.gemini_circuit.check().await
+    }
+    async fn circuit_success(&self) { self.base.gemini_circuit.record_success().await; }
+    async fn circuit_failure(&self) { self.base.gemini_circuit.record_failure().await; }
+
+    async fn prepare_a2a_context(
+        &self,
+        _prompt: &str,
+        _model_override: Option<String>,
+        _agent_override: Option<(String, f64, String)>,
+        _session_wd: &str,
+    ) -> jaskier_ai_modules::a2a::A2aContext {
+        // CH does not use the A2A protocol — return a minimal stub context.
+        // Real CH delegations go through /api/claude/chat/stream (Anthropic).
+        jaskier_ai_modules::a2a::A2aContext {
+            agent_id: "stub".to_string(),
+            model: "claude-sonnet-4-6".to_string(),
+            api_key: String::new(),
+            is_oauth: false,
+            system_prompt: String::new(),
+            final_user_prompt: _prompt.to_string(),
+            temperature: 1.0,
+            top_p: 1.0,
+            max_tokens: 8192,
+            max_iterations: 1,
+            thinking_level: "none".to_string(),
+            working_directory: _session_wd.to_string(),
+            call_depth: 0,
+        }
+    }
+
+    async fn build_a2a_tools(&self) -> serde_json::Value {
+        serde_json::json!([])
+    }
+
+    async fn execute_a2a_tool(
+        &self,
+        _name: &str,
+        _args: &serde_json::Value,
+        _working_dir: &str,
+    ) -> Result<String, String> {
+        Err("A2A protocol not supported by ClaudeHydra".to_string())
+    }
+
+    fn build_a2a_thinking_config(&self, _model: &str, _thinking_level: &str) -> Option<serde_json::Value> {
+        None
+    }
 }

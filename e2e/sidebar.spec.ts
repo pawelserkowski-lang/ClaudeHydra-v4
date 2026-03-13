@@ -31,8 +31,8 @@ test.describe('Sidebar', () => {
 
   // ── Navigation items ────────────────────────────────────────────────
 
-  test('should show all nav items (home, chat)', async () => {
-    const navIds = ['home', 'chat'];
+  test('should show all nav items (home, chat, logs, delegations, analytics, settings)', async () => {
+    const navIds = ['home', 'chat', 'logs', 'delegations', 'analytics', 'settings'];
     for (const id of navIds) {
       await expect(sidebar.navButton(id)).toBeVisible();
     }

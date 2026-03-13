@@ -10,9 +10,11 @@ use tower::ServiceExt;
 use claudehydra_backend::state::AppState;
 
 /// Build a test app router without requiring a real database.
+/// Uses `create_test_router` — no GovernorLayer (rate limiter needs peer IP
+/// which `oneshot()` doesn't provide).
 fn test_app() -> axum::Router {
     let state = AppState::new_test();
-    claudehydra_backend::create_router(state)
+    claudehydra_backend::create_test_router(state)
 }
 
 #[tokio::test]
@@ -37,8 +39,10 @@ async fn auth_mode_endpoint_returns_ok() {
     assert_eq!(response.status(), StatusCode::OK);
 
     let json = body_json(response).await;
-    // In test mode, AUTH_SECRET is not set, so mode = "open"
-    assert_eq!(json["mode"], "open");
+    // Shared auth_mode handler returns {"auth_required": bool}.
+    // In test mode, AUTH_SECRET is not set → auth_required = false.
+    assert!(json["auth_required"].is_boolean());
+    assert_eq!(json["auth_required"], false);
 }
 
 #[tokio::test]

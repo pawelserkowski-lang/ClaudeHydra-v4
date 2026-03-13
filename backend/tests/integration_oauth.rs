@@ -285,5 +285,6 @@ async fn auth_mode_open_when_no_secret() {
     assert_eq!(response.status(), StatusCode::OK);
 
     let json = body_json(response).await;
-    assert_eq!(json["mode"], "open", "No AUTH_SECRET -> open mode");
+    assert!(json["auth_required"].is_boolean(), "Response should have auth_required field");
+    assert_eq!(json["auth_required"], false, "No AUTH_SECRET -> auth_required = false");
 }

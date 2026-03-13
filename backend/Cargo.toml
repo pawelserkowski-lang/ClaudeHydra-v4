@@ -9,9 +9,12 @@ workspace = true
 
 [dependencies]
 jaskier-core = { path = "../../../crates/jaskier-core" }
+jaskier-hydra-state = { path = "../../../crates/jaskier-hydra-state" }
 jaskier-oauth = { path = "../../../crates/jaskier-oauth" }
 jaskier-browser = { path = "../../../crates/jaskier-browser" }
 jaskier-tools = { path = "../../../crates/jaskier-tools" }
+jaskier-db = { path = "../../../crates/jaskier-db" }
+jaskier-ai-modules = { path = "../../../crates/jaskier-ai-modules" }
 axum = { workspace = true, features = ["ws"] }
 tokio = { workspace = true }
 tower-http = { workspace = true }

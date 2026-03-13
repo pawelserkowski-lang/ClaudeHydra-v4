@@ -175,14 +175,23 @@
 - **@jaskier/hydra-app** (NEW package): shared Hydra app shell, layout, routing, top-level providers
 - **New traits**: HasSessionsState, HasAgentState, HasHealthState, HasMcpState, HasMcpServerState, HasA2aState, HasKnowledgeApi, HasGeminiStreamingState, HasOpenAIStreamingState
 - **R9 cleanup**: CI updated (sparse-clone verifies all 9 crates), Makefile `ci-all` target, 17 clippy collapsible-if warnings fixed in shared crates (edition 2024 let chains)
-- **Current totals**: 9 shared Rust crates, 16 Cargo workspace members, 12 frontend packages, 24 Turbo packages
-- **Tests**: 684 passing across workspace (448 shared crate + 236 app backend), 6 ignored
+
+## Shared Crate Integration (Round 12) — as of 2026-03-13
+- **CH BaseHydraState migration** (ARCH-001): `state.rs` refactored from ~230 lines of manual trait impls to `BaseHydraState` wrapper + `delegate_base_traits!` macro with `extra_traits: [HasAnthropicOAuthState, HasMetricsState]`
+- **jaskier-core::handlers::anthropic_streaming**: `HasAnthropicStreamingState` trait + shared streaming handler extracted from CH's custom `handlers/streaming.rs`
+- **jaskier-oauth::anthropic**: `HasAnthropicOAuthState` trait extracted — Anthropic MAX Plan PKCE flow now in shared crate
+- **jaskier-core::metrics**: `HasMetricsState` trait + Prometheus metrics endpoint extracted to shared crate
+- **jaskier-integration-tests** (NEW crate): cross-crate integration tests verifying trait chain, delegate_base_traits! macro, extra_traits extensions
+- **@jaskier/memory deleted**: 205 LOC package with zero direct imports — Knowledge Graph client merged into @jaskier/hydra-app
+- **Frontend**: `client.ts` migrated to shared pattern, `tsconfig.json` updated to extend @jaskier/typescript-config, E2E navigation test added
+- **Current totals**: 11 shared Rust crates, 18 Cargo workspace members, 10 frontend packages, 22 Turbo packages
+- **Clippy**: 0 warnings in shared crates (all 5 expect_used warnings fixed)
 
 ## Workspace CLAUDE.md (canonical reference)
 - Full Jaskier ecosystem docs: `C:\Users\BIURODOM\Desktop\JaskierWorkspace\CLAUDE.md`
 - Covers: shared patterns, cross-project conventions, backend safety rules, OAuth details, MCP, working directory, fly.io infra
 - This file is a project-scoped summary; workspace CLAUDE.md is the source of truth
-- Last synced: 2026-03-12 (Round 9 CI/Dockerfile/Makefile unification, clippy cleanup)
+- Last synced: 2026-03-13 (R12 — BaseHydraState migration, @jaskier/memory deletion, new traits, integration tests)
 
 ## Browser Proxy (gemini-browser-proxy)
 - **Watchdog**: `watchdog.rs` checks proxy health every 30s via `detailed_health_check()`, auto-restarts with exponential backoff (120sâ†’240sâ†’480sâ†’900s max)

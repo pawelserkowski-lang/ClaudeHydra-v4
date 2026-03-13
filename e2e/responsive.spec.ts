@@ -53,8 +53,8 @@ test.describe('Responsive Layout', () => {
 
     await sidebar.openMobileDrawer();
 
-    // All 5 nav items should be visible inside the drawer
-    const navIds = ['home', 'chat'];
+    // All 6 nav items should be visible inside the drawer
+    const navIds = ['home', 'chat', 'logs', 'delegations', 'analytics', 'settings'];
     for (const id of navIds) {
       const navBtn = page.locator(`${SEL.mobileDrawer} ${SEL.nav(id)}`);
       // If the nav buttons are direct children of drawer, look inside drawer

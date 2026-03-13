@@ -72,4 +72,16 @@ export const SEL = {
   settingsAutoStartToggle: '[data-testid="settings-auto-start-toggle"]',
   settingsProvider: (id: string) => `[data-testid="settings-provider-${id}"]`,
   settingsAbout: '[data-testid="settings-about"]',
+
+  // Agents
+  agentsView: '[data-testid="agents-view"]',
+  agentsHeader: '[data-testid="agents-header"]',
+  agentsOnlineCount: '[data-testid="agents-online-count"]',
+  agentsFilterBar: '[data-testid="agents-filter-bar"]',
+  agentsGrid: '[data-testid="agents-grid"]',
+  agentsFilter: (tier: string) => `[data-testid="agents-filter-${tier}"]`,
+  agentCard: (id: string) => `[data-testid="agent-card-${id}"]`,
+
+  // Status Footer
+  statusFooter: '[data-testid="status-footer"]',
 } as const;
