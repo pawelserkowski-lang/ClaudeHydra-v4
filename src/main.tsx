@@ -11,7 +11,7 @@ import { ViewSkeleton } from '@/components/molecules/ViewSkeleton';
 import { AppShell } from '@/components/organisms/AppShell';
 import { queryClient } from '@/shared/api/queryClient';
 import { useViewStore } from '@/stores/viewStore';
-import '@/i18n';
+import '@jaskier/i18n';
 import './styles/globals.css';
 
 // ---------------------------------------------------------------------------

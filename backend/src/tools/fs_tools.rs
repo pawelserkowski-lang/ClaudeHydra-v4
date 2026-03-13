@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::{
-    BLOCKED_BACKUP_EXTENSIONS, BLOCKED_WRITE_EXTENSIONS, BLOCKED_WRITE_PREFIXES, DEFAULT_MAX_DEPTH,
-    DEFAULT_MAX_LINES, DEFAULT_MAX_RESULTS, MAX_READ_BYTES, MAX_WRITE_BYTES,
+    is_binary, is_blocked_for_write, BLOCKED_BACKUP_EXTENSIONS, DEFAULT_BLOCKED_WRITE_PREFIXES,
+    DEFAULT_MAX_DEPTH, DEFAULT_MAX_LINES, DEFAULT_MAX_RESULTS, MAX_READ_BYTES, MAX_WRITE_BYTES,
 };
 
 // ── Path validation ─────────────────────────────────────────────────────
@@ -103,62 +103,14 @@ pub fn validate_path(raw: &str, allowed_dirs: &[PathBuf]) -> Result<PathBuf, Str
     Ok(canonical)
 }
 
-pub fn is_blocked_for_write(path: &Path) -> bool {
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        let lower = ext.to_lowercase();
-        if BLOCKED_WRITE_EXTENSIONS.contains(&lower.as_str()) {
-            return true;
-        }
-    }
-    // Also block dotfiles like .env
-    if let Some(name) = path.file_name().and_then(|n| n.to_str())
-        && (name == ".env" || name.starts_with(".env."))
-    {
-        return true;
-    }
-
-    // #5 Extended blocking: system paths
-    let path_str = path.to_string_lossy();
-    for prefix in BLOCKED_WRITE_PREFIXES {
-        if path_str.starts_with(prefix) {
-            return true;
-        }
-    }
-
-    // Block writing to .git directories
-    for component in path.components() {
-        if let std::path::Component::Normal(c) = component
-            && c.to_str() == Some(".git")
-        {
-            return true;
-        }
-    }
-
-    // Block config/credential filenames regardless of path
-    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-        let lower = name.to_lowercase();
-        if lower == ".gitconfig"
-            || lower == ".npmrc"
-            || lower == ".netrc"
-            || lower == "credentials"
-            || lower == "credentials.json"
-            || lower == "id_rsa"
-            || lower == "id_ed25519"
-            || lower == "authorized_keys"
-            || lower == "known_hosts"
-            || lower == ".ssh"
-        {
-            return true;
-        }
-    }
-
-    false
-}
-
-pub fn is_binary(data: &[u8]) -> bool {
-    let check_len = data.len().min(8192);
-    data[..check_len].contains(&0)
-}
+// `is_blocked_for_write` and `is_binary` are imported from jaskier_tools::files::validator
+// via super:: re-exports. The shared versions contain identical logic for:
+// - Dangerous extension blocking (exe, dll, env, key, pem, etc.)
+// - .env / .env.* file blocking
+// - .git directory blocking
+// - Credential filename blocking
+// - System prefix blocking
+// - Binary data detection (null-byte heuristic in first 8 KiB)
 
 // ── read_file ───────────────────────────────────────────────────────────
 
@@ -371,7 +323,7 @@ pub async fn exec_write_file(input: &Value, allowed_dirs: &[PathBuf]) -> (String
         Err(e) => return (e, true),
     };
 
-    if is_blocked_for_write(&path) {
+    if is_blocked_for_write(&path, DEFAULT_BLOCKED_WRITE_PREFIXES) {
         return (
             format!(
                 "Write blocked: cannot write to '{}' (restricted extension)",

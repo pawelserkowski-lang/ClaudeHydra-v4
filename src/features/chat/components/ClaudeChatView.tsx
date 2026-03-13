@@ -302,8 +302,8 @@ export function ClaudeChatView() {
 
   // DB sync
   const { addMessageWithSync, renameSessionWithSync, generateTitleWithSync } = useSessionSync();
-  const activeSessionId = useViewStore(useShallow((s) => s.activeSessionId));
-  const activeSession = useViewStore(useShallow((s) => s.chatSessions.find((cs) => cs.id === s.activeSessionId)));
+  const currentSessionId = useViewStore(useShallow((s) => s.currentSessionId));
+  const activeSession = useViewStore(useShallow((s) => s.sessions.find((cs) => cs.id === s.currentSessionId)));
   const setSessionWorkingDirectory = useViewStore(useShallow((s) => s.setSessionWorkingDirectory));
 
   // Settings (for welcome message)
@@ -377,11 +377,11 @@ export function ClaudeChatView() {
 
   const handleWorkingDirectoryChange = useCallback(
     (wd: string) => {
-      if (activeSessionId) {
-        setSessionWorkingDirectory(activeSessionId, wd);
+      if (currentSessionId) {
+        setSessionWorkingDirectory(currentSessionId, wd);
       }
     },
-    [activeSessionId, setSessionWorkingDirectory],
+    [currentSessionId, setSessionWorkingDirectory],
   );
 
   // ----- Prompt history for arrow-key navigation (global, SQL-backed) ------
@@ -402,7 +402,7 @@ export function ClaudeChatView() {
     const batch = tokenBatchRef.current;
     if (!batch) return;
     tokenBatchRef.current = '';
-    const sid = useViewStore.getState().activeSessionId;
+    const sid = useViewStore.getState().currentSessionId;
     if (!sid) return;
     messageState.updateSessionMessages(sid, (prev) => {
       const last = prev[prev.length - 1];
@@ -440,7 +440,7 @@ export function ClaudeChatView() {
           },
         ],
       }));
-      const sid = useViewStore.getState().activeSessionId;
+      const sid = useViewStore.getState().currentSessionId;
       if (sid) {
         messageState.updateSessionMessages(sid, (prev) => {
           const last = prev[prev.length - 1];
@@ -496,7 +496,7 @@ export function ClaudeChatView() {
             : t,
         ),
       }));
-      const sid = useViewStore.getState().activeSessionId;
+      const sid = useViewStore.getState().currentSessionId;
       if (sid) {
         messageState.updateSessionMessages(sid, (prev) => {
           const last = prev[prev.length - 1];
@@ -526,7 +526,7 @@ export function ClaudeChatView() {
         flushTimerRef.current = null;
       }
       setAgentActivity((prev) => ({ ...prev, isActive: false }));
-      const sid = useViewStore.getState().activeSessionId;
+      const sid = useViewStore.getState().currentSessionId;
       if (sid) {
         messageState.updateSessionMessages(sid, (prev) => {
           const last = prev[prev.length - 1];
@@ -549,7 +549,7 @@ export function ClaudeChatView() {
         flushTimerRef.current = null;
       }
       setAgentActivity((prev) => ({ ...prev, isActive: false }));
-      const sid = useViewStore.getState().activeSessionId;
+      const sid = useViewStore.getState().currentSessionId;
       if (sid) {
         messageState.updateSessionMessages(sid, (prev) => {
           const last = prev[prev.length - 1];
@@ -569,7 +569,7 @@ export function ClaudeChatView() {
         toast.error('You are offline. Cannot send messages.');
         return;
       }
-      const sessionId = useViewStore.getState().activeSessionId;
+      const sessionId = useViewStore.getState().currentSessionId;
       if (!selectedModel || !sessionId) return;
       if (messageState.loadingSessionsRef.current.has(sessionId)) return;
 
@@ -730,7 +730,7 @@ export function ClaudeChatView() {
                 : 'Configure API key in Settings'
           }
           promptHistory={promptHistory}
-          sessionId={activeSessionId ?? undefined}
+          sessionId={currentSessionId ?? undefined}
           workingDirectory={activeSession?.workingDirectory}
           onWorkingDirectoryChange={handleWorkingDirectoryChange}
         />

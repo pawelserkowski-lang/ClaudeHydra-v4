@@ -23,8 +23,8 @@ const MIGRATION_FLAG = 'ch-sessions-migrated-to-db';
 
 export function useSessionSync() {
   const {
-    chatSessions,
-    activeSessionId,
+    sessions,
+    currentSessionId,
     createSessionWithId,
     deleteSessionLocal,
     updateSessionTitleLocal,
@@ -32,11 +32,11 @@ export function useSessionSync() {
     syncWorkingDirectories,
     selectSession,
     openTab,
-    setView,
+    setCurrentView,
   } = useViewStore(
     useShallow((state) => ({
-      chatSessions: state.chatSessions,
-      activeSessionId: state.activeSessionId,
+      sessions: state.sessions,
+      currentSessionId: state.currentSessionId,
       createSessionWithId: state.createSessionWithId,
       deleteSessionLocal: state.deleteSession,
       updateSessionTitleLocal: state.updateSessionTitle,
@@ -44,7 +44,7 @@ export function useSessionSync() {
       syncWorkingDirectories: state.syncWorkingDirectories,
       selectSession: state.selectSession,
       openTab: state.openTab,
-      setView: state.setView,
+      setCurrentView: state.setCurrentView,
     })),
   );
 
@@ -77,13 +77,13 @@ export function useSessionSync() {
 
     // One-time migration: push any localStorage-only sessions to DB
     if (!localStorage.getItem(MIGRATION_FLAG)) {
-      const localOnly = chatSessions.filter((local) => !dbSessions.some((db) => db.id === local.id));
+      const localOnly = sessions.filter((local) => !dbSessions.some((db) => db.id === local.id));
       for (const session of localOnly) {
         createMutation.mutate({ title: session.title });
       }
       localStorage.setItem(MIGRATION_FLAG, '1');
     }
-  }, [dbLoaded, dbSessions, chatSessions, hydrateSessions, createMutation]);
+  }, [dbLoaded, dbSessions, sessions, hydrateSessions, createMutation]);
 
   // Sync workingDirectory from DB on every load (DB is source of truth)
   useEffect(() => {
@@ -100,7 +100,7 @@ export function useSessionSync() {
   /** #16 - Optimistic UI: immediately show temp session, replace on API success, remove on failure */
   const createSessionWithSync = useCallback(
     (title?: string) => {
-      const sessionTitle = title ?? `Chat ${chatSessions.length + 1}`;
+      const sessionTitle = title ?? `Chat ${sessions.length + 1}`;
       // Create optimistic temp session in store immediately
       const tempId = `_pending_${crypto.randomUUID()}`;
       createSessionWithId(tempId, sessionTitle);
@@ -122,7 +122,7 @@ export function useSessionSync() {
         },
       );
     },
-    [chatSessions.length, createMutation, createSessionWithId, deleteSessionLocal],
+    [sessions.length, createMutation, createSessionWithId, deleteSessionLocal],
   );
 
   const deleteSessionWithSync = useCallback(
@@ -169,11 +169,11 @@ export function useSessionSync() {
     renameSessionWithSync,
     generateTitleWithSync,
     addMessageWithSync,
-    activeSessionId,
-    chatSessions,
+    currentSessionId,
+    sessions,
     selectSession,
     openTab,
-    setView,
+    setCurrentView,
     isLoading: createMutation.isPending,
   };
 }

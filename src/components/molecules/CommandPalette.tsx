@@ -34,7 +34,7 @@ export function CommandPalette() {
   const modalRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { resolvedTheme, toggleTheme } = useTheme();
-  const setView = useViewStore((s) => s.setView);
+  const setCurrentView = useViewStore((s) => s.setCurrentView);
   const toggleSidebar = useViewStore((s) => s.toggleSidebar);
   const { createSessionWithSync } = useSessionSync();
   const isLight = resolvedTheme === 'light';
@@ -52,7 +52,7 @@ export function CommandPalette() {
         icon: <Home size={16} />,
         keywords: 'home start dashboard',
         handler: () => {
-          setView('home');
+          setCurrentView('home');
           setOpen(false);
         },
       },
@@ -62,7 +62,7 @@ export function CommandPalette() {
         icon: <MessageSquare size={16} />,
         keywords: 'chat message conversation',
         handler: () => {
-          setView('chat');
+          setCurrentView('chat');
           setOpen(false);
         },
       },
@@ -72,7 +72,7 @@ export function CommandPalette() {
         icon: <Plus size={16} />,
         keywords: 'new chat session create',
         handler: () => {
-          setView('chat');
+          setCurrentView('chat');
           setOpen(false);
           createSessionWithSync();
         },
@@ -98,7 +98,7 @@ export function CommandPalette() {
         },
       },
     ],
-    [t, setView, toggleSidebar, isLight, toggleTheme, createSessionWithSync],
+    [t, setCurrentView, toggleSidebar, isLight, toggleTheme, createSessionWithSync],
   );
 
   const filtered = useMemo(() => {

@@ -1,5 +1,5 @@
-﻿/**
- * useChatMessages â€” Per-session message state management.
+/**
+ * useChatMessages — Per-session message state management.
  *
  * Handles message caching across sessions, lazy loading from DB,
  * and session switching without losing state.
@@ -25,7 +25,7 @@ export function useChatMessages() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  const activeSessionId = useViewStore(useShallow((s) => s.activeSessionId));
+  const currentSessionId = useViewStore(useShallow((s) => s.currentSessionId));
 
   /** Update messages for a specific session. Only updates display if session is active. */
   const updateSessionMessages = useCallback((sessionId: string, updater: (prev: ChatMessage[]) => ChatMessage[]) => {
@@ -45,7 +45,7 @@ export function useChatMessages() {
 
     sessionMessagesRef.current[sessionId] = updated;
 
-    if (sessionId === useViewStore.getState().activeSessionId) {
+    if (sessionId === useViewStore.getState().currentSessionId) {
       setMessages(updated);
     }
   }, []);
@@ -58,7 +58,7 @@ export function useChatMessages() {
       loadingSessionsRef.current.delete(sessionId);
     }
 
-    if (sessionId === useViewStore.getState().activeSessionId) {
+    if (sessionId === useViewStore.getState().currentSessionId) {
       setIsLoading(loading);
     }
   }, []);
@@ -66,23 +66,23 @@ export function useChatMessages() {
   // ----- Session switch: save & restore messages ---------------------------
 
   useEffect(() => {
-    if (!activeSessionId) {
+    if (!currentSessionId) {
       setMessages([]);
       setIsLoading(false);
       return;
     }
 
-    const cached = sessionMessagesRef.current[activeSessionId] ?? [];
+    const cached = sessionMessagesRef.current[currentSessionId] ?? [];
     if (cached.length > 0) {
       setMessages(cached);
-      setIsLoading(loadingSessionsRef.current.has(activeSessionId));
+      setIsLoading(loadingSessionsRef.current.has(currentSessionId));
       return;
     }
 
     // Lazy-load from DB when sessionMessagesRef is empty (e.g. after page refresh)
     let cancelled = false;
     setIsLoading(true);
-    apiGet<SessionDetail>(`/api/sessions/${activeSessionId}`)
+    apiGet<SessionDetail>(`/api/sessions/${currentSessionId}`)
       .then((detail) => {
         if (cancelled) return;
         const mapped: ChatMessage[] = detail.messages.map((m) => ({
@@ -102,7 +102,7 @@ export function useChatMessages() {
             }),
           ),
         }));
-        sessionMessagesRef.current[activeSessionId] = mapped;
+        sessionMessagesRef.current[currentSessionId] = mapped;
         setMessages(mapped);
       })
       .catch(() => {
@@ -116,20 +116,20 @@ export function useChatMessages() {
     return () => {
       cancelled = true;
     };
-  }, [activeSessionId]);
+  }, [currentSessionId]);
 
   /** Clear messages for the active session. */
   const clearChat = useCallback(() => {
-    if (activeSessionId) {
-      sessionMessagesRef.current[activeSessionId] = [];
-      loadingSessionsRef.current.delete(activeSessionId);
+    if (currentSessionId) {
+      sessionMessagesRef.current[currentSessionId] = [];
+      loadingSessionsRef.current.delete(currentSessionId);
       // Abort any in-progress stream for this session
-      abortControllersRef.current[activeSessionId]?.abort();
-      delete abortControllersRef.current[activeSessionId];
+      abortControllersRef.current[currentSessionId]?.abort();
+      delete abortControllersRef.current[currentSessionId];
     }
     setMessages([]);
     setIsLoading(false);
-  }, [activeSessionId]);
+  }, [currentSessionId]);
 
   return {
     messages,

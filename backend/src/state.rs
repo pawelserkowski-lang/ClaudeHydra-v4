@@ -234,6 +234,13 @@ impl jaskier_core::logs::HasLogBuffer for AppState {
 
 // ── jaskier-oauth trait implementations ──────────────────────────────────────
 
+impl jaskier_oauth::anthropic::HasAnthropicOAuthState for AppState {
+    fn db(&self) -> &sqlx::PgPool { &self.db }
+    fn http_client(&self) -> &reqwest::Client { &self.http_client }
+    fn anthropic_oauth_pkce_states(&self) -> &Arc<RwLock<HashMap<String, OAuthPkceState>>> { &self.oauth_pkce }
+    fn anthropic_oauth_table(&self) -> &'static str { "ch_oauth_tokens" }
+}
+
 impl jaskier_oauth::google::HasGoogleOAuthState for AppState {
     fn db(&self) -> &sqlx::PgPool { &self.db }
     fn http_client(&self) -> &reqwest::Client { &self.http_client }
@@ -278,6 +285,35 @@ impl jaskier_core::model_registry::HasModelRegistryState for AppState {
     fn model_pins_table(&self) -> &'static str { "ch_model_pins" }
     fn settings_table(&self) -> &'static str { "ch_settings" }
     fn audit_log_table(&self) -> &'static str { "ch_audit_log" }
+}
+
+// ── jaskier-core metrics trait implementation ─────────────────────────────
+
+impl jaskier_core::metrics::HasMetricsState for AppState {
+    fn metrics_db(&self) -> &sqlx::PgPool { &self.db }
+
+    fn metrics_start_time(&self) -> std::time::Instant { self.start_time }
+
+    async fn metrics_snapshot(&self) -> jaskier_core::metrics::MetricsSnapshot {
+        let snap = self.system_monitor.read().await;
+        jaskier_core::metrics::MetricsSnapshot {
+            cpu_usage_percent: snap.cpu_usage_percent,
+            memory_used_mb: snap.memory_used_mb,
+            memory_total_mb: snap.memory_total_mb,
+        }
+    }
+
+    fn a2a_tasks_table(&self) -> Option<&'static str> {
+        Some("ch_a2a_tasks")
+    }
+
+    fn a2a_agent_column(&self) -> &'static str {
+        "agent_name"
+    }
+
+    fn a2a_error_filter(&self) -> &'static str {
+        "is_error = TRUE"
+    }
 }
 
 impl jaskier_browser::watchdog::HasWatchdogState for AppState {

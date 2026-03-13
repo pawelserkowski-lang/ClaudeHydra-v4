@@ -24,26 +24,10 @@ const DEFAULT_MAX_LINES: usize = 500;
 const DEFAULT_MAX_DEPTH: usize = 3;
 const DEFAULT_MAX_RESULTS: usize = 50;
 
-/// Extensions that are never writable.
-const BLOCKED_WRITE_EXTENSIONS: &[&str] = &[
-    "env", "key", "pem", "exe", "dll", "so", "dylib", "bat", "cmd", "ps1",
-];
-
-/// Backup / temporary extensions blocked for read and write (#6 path traversal hardening).
-const BLOCKED_BACKUP_EXTENSIONS: &[&str] = &["bak", "old", "orig", "swp"];
-
-/// System paths that must never be written to (prefix match on canonical path).
-#[cfg(windows)]
-const BLOCKED_WRITE_PREFIXES: &[&str] = &[
-    "C:\\Windows",
-    "C:\\Program Files",
-    "C:\\Program Files (x86)",
-    "C:\\ProgramData",
-];
-#[cfg(not(windows))]
-const BLOCKED_WRITE_PREFIXES: &[&str] = &[
-    "/etc", "/usr", "/bin", "/sbin", "/var", "/boot", "/proc", "/sys",
-];
+// Re-export shared write-safety constants and functions from jaskier-tools
+pub(crate) use jaskier_tools::files::{
+    is_binary, is_blocked_for_write, BLOCKED_BACKUP_EXTENSIONS, DEFAULT_BLOCKED_WRITE_PREFIXES,
+};
 
 // ── ToolExecutor ────────────────────────────────────────────────────────
 

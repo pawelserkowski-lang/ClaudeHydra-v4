@@ -148,24 +148,24 @@ export const HomePage = memo(() => {
   const { t } = useTranslation();
   const theme = useViewTheme();
 
-  const chatSessions = useViewStore((s) => s.chatSessions);
-  const setView = useViewStore((s) => s.setView);
+  const sessions = useViewStore((s) => s.sessions);
+  const setCurrentView = useViewStore((s) => s.setCurrentView);
   const selectSession = useViewStore((s) => s.selectSession);
   const openTab = useViewStore((s) => s.openTab);
   const { createSessionWithSync } = useSessionSync();
 
   const recentSessions = useMemo(
-    () => [...chatSessions].sort((a, b) => b.createdAt - a.createdAt).slice(0, MAX_RECENT_SESSIONS),
-    [chatSessions],
+    () => [...sessions].sort((a, b) => b.createdAt - a.createdAt).slice(0, MAX_RECENT_SESSIONS),
+    [sessions],
   );
 
   const handleOpenSession = useCallback(
     (sessionId: string) => {
       selectSession(sessionId);
       openTab(sessionId);
-      setView('chat');
+      setCurrentView('chat');
     },
-    [selectSession, openTab, setView],
+    [selectSession, openTab, setCurrentView],
   );
 
   return (

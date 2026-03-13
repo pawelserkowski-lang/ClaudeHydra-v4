@@ -29,9 +29,8 @@ beforeEach(() => {
   useViewStore.setState({
     currentView: 'home',
     sidebarCollapsed: false,
-    mobileDrawerOpen: false,
-    activeSessionId: null,
-    chatSessions: [],
+    currentSessionId: null,
+    sessions: [],
     tabs: [],
     activeTabId: null,
   });
@@ -52,16 +51,12 @@ describe('viewStore — initial state', () => {
     expect(getState().sidebarCollapsed).toBe(false);
   });
 
-  it('has mobileDrawerOpen set to false', () => {
-    expect(getState().mobileDrawerOpen).toBe(false);
+  it('has currentSessionId set to null', () => {
+    expect(getState().currentSessionId).toBeNull();
   });
 
-  it('has activeSessionId set to null', () => {
-    expect(getState().activeSessionId).toBeNull();
-  });
-
-  it('has an empty chatSessions array', () => {
-    expect(getState().chatSessions).toEqual([]);
+  it('has an empty sessions array', () => {
+    expect(getState().sessions).toEqual([]);
   });
 
   it('has an empty tabs array', () => {
@@ -74,20 +69,20 @@ describe('viewStore — initial state', () => {
 });
 
 // ---------------------------------------------------------------------------
-// setView
+// setCurrentView
 // ---------------------------------------------------------------------------
 
-describe('viewStore — setView', () => {
+describe('viewStore — setCurrentView', () => {
   it('changes currentView to the given ViewId', () => {
-    act('setView', 'chat');
+    act('setCurrentView', 'chat');
     expect(getState().currentView).toBe('chat');
   });
 
   it('can switch between multiple views', () => {
-    act('setView', 'chat');
+    act('setCurrentView', 'chat');
     expect(getState().currentView).toBe('chat');
 
-    act('setView', 'home');
+    act('setCurrentView', 'home');
     expect(getState().currentView).toBe('home');
   });
 });
@@ -117,20 +112,6 @@ describe('viewStore — sidebar', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Mobile drawer
-// ---------------------------------------------------------------------------
-
-describe('viewStore — mobile drawer', () => {
-  it('setMobileDrawerOpen opens and closes the drawer', () => {
-    act('setMobileDrawerOpen', true);
-    expect(getState().mobileDrawerOpen).toBe(true);
-
-    act('setMobileDrawerOpen', false);
-    expect(getState().mobileDrawerOpen).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // createSession
 // ---------------------------------------------------------------------------
 
@@ -141,17 +122,17 @@ describe('viewStore — createSession', () => {
     expect((id as string).length).toBeGreaterThan(0);
   });
 
-  it('adds the new session to chatSessions', () => {
+  it('adds the new session to sessions', () => {
     const id = act('createSession', 'My Chat') as string;
-    const session = getState().chatSessions.find((s) => s.id === id);
+    const session = getState().sessions.find((s) => s.id === id);
     expect(session).toBeDefined();
     expect(session?.title).toBe('My Chat');
     expect(session?.messageCount).toBe(0);
   });
 
-  it('sets the new session as activeSessionId', () => {
+  it('sets the new session as currentSessionId', () => {
     const id = act('createSession') as string;
-    expect(getState().activeSessionId).toBe(id);
+    expect(getState().currentSessionId).toBe(id);
   });
 
   it('creates a tab linked to the new session', () => {
@@ -169,14 +150,14 @@ describe('viewStore — createSession', () => {
 
   it('generates a default title when none is provided', () => {
     act('createSession');
-    const session = getState().chatSessions[0];
+    const session = getState().sessions[0];
     expect(session?.title).toBe('Chat 1');
   });
 
   it('prepends new sessions (most recent first)', () => {
     act('createSession', 'First');
     const secondId = act('createSession', 'Second') as string;
-    expect(getState().chatSessions[0]?.id).toBe(secondId);
+    expect(getState().sessions[0]?.id).toBe(secondId);
   });
 });
 
@@ -185,10 +166,10 @@ describe('viewStore — createSession', () => {
 // ---------------------------------------------------------------------------
 
 describe('viewStore — deleteSession', () => {
-  it('removes the session from chatSessions', () => {
+  it('removes the session from sessions', () => {
     const id = act('createSession', 'Deleteme') as string;
     act('deleteSession', id);
-    expect(getState().chatSessions.find((s) => s.id === id)).toBeUndefined();
+    expect(getState().sessions.find((s) => s.id === id)).toBeUndefined();
   });
 
   it('removes the associated tab', () => {
@@ -197,31 +178,31 @@ describe('viewStore — deleteSession', () => {
     expect(getState().tabs.find((t: ChatTab) => t.sessionId === id)).toBeUndefined();
   });
 
-  it('updates activeSessionId when the deleted session was active', () => {
+  it('updates currentSessionId when the deleted session was active', () => {
     const id1 = act('createSession', 'A') as string;
     const id2 = act('createSession', 'B') as string;
 
     // id2 is now active
-    expect(getState().activeSessionId).toBe(id2);
+    expect(getState().currentSessionId).toBe(id2);
 
     act('deleteSession', id2);
     // should fall back to remaining tab
-    expect(getState().activeSessionId).toBe(id1);
+    expect(getState().currentSessionId).toBe(id1);
   });
 
-  it('sets activeSessionId to null when no sessions remain', () => {
+  it('sets currentSessionId to null when no sessions remain', () => {
     const id = act('createSession') as string;
     act('deleteSession', id);
-    expect(getState().activeSessionId).toBeNull();
+    expect(getState().currentSessionId).toBeNull();
   });
 
-  it('does not change activeSessionId when deleting a non-active session', () => {
+  it('does not change currentSessionId when deleting a non-active session', () => {
     const id1 = act('createSession', 'A') as string;
     const id2 = act('createSession', 'B') as string;
 
     // id2 is active
     act('deleteSession', id1);
-    expect(getState().activeSessionId).toBe(id2);
+    expect(getState().currentSessionId).toBe(id2);
   });
 });
 
@@ -233,17 +214,17 @@ describe('viewStore — updateSessionTitle', () => {
   it('changes the title of the targeted session', () => {
     const id = act('createSession', 'Old Title') as string;
     act('updateSessionTitle', id, 'New Title');
-    const session = getState().chatSessions.find((s) => s.id === id);
+    const session = getState().sessions.find((s) => s.id === id);
     expect(session?.title).toBe('New Title');
   });
 
   it('updates the updatedAt timestamp', () => {
     const id = act('createSession', 'Title') as string;
-    const before = getState().chatSessions.find((s) => s.id === id)?.updatedAt;
+    const before = getState().sessions.find((s) => s.id === id)?.updatedAt;
 
     // small delay so timestamp differs
     act('updateSessionTitle', id, 'Title v2');
-    const after = getState().chatSessions.find((s) => s.id === id)?.updatedAt;
+    const after = getState().sessions.find((s) => s.id === id)?.updatedAt;
 
     expect(after).toBeGreaterThanOrEqual(before as number);
   });
@@ -254,8 +235,8 @@ describe('viewStore — updateSessionTitle', () => {
 
     act('updateSessionTitle', id2, 'Changed');
 
-    expect(getState().chatSessions.find((s) => s.id === id1)?.title).toBe('Keep');
-    expect(getState().chatSessions.find((s) => s.id === id2)?.title).toBe('Changed');
+    expect(getState().sessions.find((s) => s.id === id1)?.title).toBe('Keep');
+    expect(getState().sessions.find((s) => s.id === id2)?.title).toBe('Changed');
   });
 });
 
@@ -275,12 +256,12 @@ describe('viewStore — openTab', () => {
     expect(getState().tabs.find((t: ChatTab) => t.sessionId === id)).toBeDefined();
   });
 
-  it('sets the opened tab as activeSessionId', () => {
+  it('sets the opened tab as currentSessionId', () => {
     const id1 = act('createSession', 'A') as string;
     act('createSession', 'B');
     // id2 is active now; open id1
     act('openTab', id1);
-    expect(getState().activeSessionId).toBe(id1);
+    expect(getState().currentSessionId).toBe(id1);
   });
 
   it('does not duplicate an already-open tab', () => {
@@ -304,7 +285,7 @@ describe('viewStore — closeTab', () => {
     expect(getState().tabs.find((t: ChatTab) => t.id === tabId)).toBeUndefined();
   });
 
-  it('switches activeSessionId to a neighbour when closing the active tab', () => {
+  it('switches currentSessionId to a neighbour when closing the active tab', () => {
     const id1 = act('createSession', 'A') as string;
     const id2 = act('createSession', 'B') as string;
     const id3 = act('createSession', 'C') as string;
@@ -313,24 +294,24 @@ describe('viewStore — closeTab', () => {
     const tabId3 = getState().tabs.find((t: ChatTab) => t.sessionId === id3)?.id as string;
     act('closeTab', tabId3);
     // Should fall to a remaining session
-    expect([id1, id2]).toContain(getState().activeSessionId);
+    expect([id1, id2]).toContain(getState().currentSessionId);
   });
 
-  it('sets activeSessionId to null when the last tab is closed', () => {
+  it('sets currentSessionId to null when the last tab is closed', () => {
     const sessionId = act('createSession') as string;
     const tabId = getState().tabs.find((t: ChatTab) => t.sessionId === sessionId)?.id as string;
     act('closeTab', tabId);
-    expect(getState().activeSessionId).toBeNull();
+    expect(getState().currentSessionId).toBeNull();
   });
 
-  it('does not change activeSessionId when closing a non-active tab', () => {
+  it('does not change currentSessionId when closing a non-active tab', () => {
     const id1 = act('createSession', 'A') as string;
     const id2 = act('createSession', 'B') as string;
 
     // id2 is active
     const tabId1 = getState().tabs.find((t: ChatTab) => t.sessionId === id1)?.id as string;
     act('closeTab', tabId1);
-    expect(getState().activeSessionId).toBe(id2);
+    expect(getState().currentSessionId).toBe(id2);
   });
 
   it('does not close pinned tabs', () => {

@@ -81,8 +81,8 @@ function SidebarContent({ collapsed, onClose, isMobile = false }: SidebarContent
   // Business logic from extracted hook
   const {
     currentView,
-    activeSessionId,
-    chatSessions,
+    currentSessionId,
+    sessions,
     sortedSessions,
     sessionSearchQuery,
     focusedSessionIndex,
@@ -325,7 +325,7 @@ function SidebarContent({ collapsed, onClose, isMobile = false }: SidebarContent
         </div>
 
         {/* #19 - Session search input (only when expanded and sessions visible) */}
-        {!collapsed && showSessions && chatSessions.length > 0 && (
+        {!collapsed && showSessions && sessions.length > 0 && (
           <SessionSearch onSearch={handleSessionSearch} className="px-1 pb-1.5" />
         )}
 
@@ -355,7 +355,7 @@ function SidebarContent({ collapsed, onClose, isMobile = false }: SidebarContent
                   <SessionItem
                     key={session.id}
                     session={session}
-                    isActive={session.id === activeSessionId}
+                    isActive={session.id === currentSessionId}
                     isFocused={focusedSessionIndex === idx}
                     collapsed={collapsed}
                     isDark={isDark}
@@ -500,8 +500,9 @@ function SidebarContent({ collapsed, onClose, isMobile = false }: SidebarContent
 
 export function Sidebar() {
   const { t } = useTranslation();
-  const { sidebarCollapsed, setSidebarCollapsed, toggleSidebar, mobileDrawerOpen, setMobileDrawerOpen, currentView } =
+  const { sidebarCollapsed, setSidebarCollapsed, toggleSidebar, currentView } =
     useViewStore();
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
 

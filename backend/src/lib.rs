@@ -18,7 +18,7 @@ pub mod tools;
 pub mod watchdog;
 
 use axum::Router;
-use axum::extract::{DefaultBodyLimit, State};
+use axum::extract::DefaultBodyLimit;
 use axum::middleware;
 use axum::routing::{delete, get, patch, post};
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
@@ -382,8 +382,11 @@ fn api_key_auth_routes() -> Router<AppState> {
 
 /// Extra routes: Prometheus metrics (public), v1 API aliases, WebSocket.
 fn extra_routes() -> Router<AppState> {
-    // ── Metrics endpoint (public, no auth) ─────────────────────────
-    let metrics = Router::new().route("/api/metrics", get(metrics_handler));
+    // ── Metrics endpoint (public, no auth) — shared handler from jaskier-core
+    let metrics = Router::new().route(
+        "/api/metrics",
+        get(jaskier_core::metrics::metrics_handler::<AppState>),
+    );
 
     // ── API v1 prefix alias (mirrors /api routes for forward compat) ─
     let v1_public = Router::new()
@@ -502,96 +505,6 @@ pub fn create_test_router(state: AppState) -> Router {
     assemble_app(state, public_routes(), protected, api_key, extra_routes())
 }
 
-// ── Prometheus-compatible metrics endpoint ───────────────────────────────────
-
-/// Sanitize a string for use as a Prometheus label value.
-/// Only allows alphanumeric, underscore, hyphen, dot. Truncates to 64 chars.
-fn sanitize_prom_label(s: &str) -> String {
-    s.chars()
-        .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-' || *c == '.')
-        .take(64)
-        .collect()
-}
-
-async fn metrics_handler(State(state): State<AppState>) -> String {
-    let snapshot = state.system_monitor.read().await;
-    let uptime = state.start_time.elapsed().as_secs();
-
-    // A2A delegation metrics
-    let a2a_stats: Option<(i64, i64, i64, Option<f64>)> = sqlx::query_as(
-        "SELECT COUNT(*), \
-         COUNT(*) FILTER (WHERE status = 'completed'), \
-         COUNT(*) FILTER (WHERE is_error = TRUE), \
-         AVG(duration_ms)::float8 \
-         FROM ch_a2a_tasks",
-    )
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
-
-    let (a2a_total, a2a_completed, a2a_errors, a2a_avg_ms) = a2a_stats.unwrap_or((0, 0, 0, None));
-
-    // Per-agent duration metrics
-    let per_agent: Vec<(String, f64, i64)> = sqlx::query_as(
-        "SELECT agent_name, AVG(duration_ms)::float8, COUNT(*) \
-         FROM ch_a2a_tasks WHERE duration_ms IS NOT NULL \
-         GROUP BY agent_name ORDER BY agent_name",
-    )
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
-
-    let mut agent_lines = String::new();
-    if !per_agent.is_empty() {
-        agent_lines.push_str(
-            "# HELP a2a_delegation_duration_by_agent Average delegation duration per agent in ms\n\
-             # TYPE a2a_delegation_duration_by_agent gauge\n",
-        );
-        for (agent, avg_ms, count) in &per_agent {
-            let safe_agent = sanitize_prom_label(agent);
-            agent_lines.push_str(&format!(
-                "a2a_delegation_duration_by_agent{{agent=\"{}\"}} {:.1}\n\
-                 a2a_delegation_count_by_agent{{agent=\"{}\"}} {}\n",
-                safe_agent, avg_ms, safe_agent, count
-            ));
-        }
-    }
-
-    format!(
-        "# HELP cpu_usage_percent CPU usage percentage\n\
-         # TYPE cpu_usage_percent gauge\n\
-         cpu_usage_percent {:.1}\n\
-         # HELP memory_used_bytes Memory used in bytes\n\
-         # TYPE memory_used_bytes gauge\n\
-         memory_used_bytes {}\n\
-         # HELP memory_total_bytes Total memory in bytes\n\
-         # TYPE memory_total_bytes gauge\n\
-         memory_total_bytes {}\n\
-         # HELP uptime_seconds Backend uptime in seconds\n\
-         # TYPE uptime_seconds counter\n\
-         uptime_seconds {}\n\
-         # HELP a2a_delegations_total Total A2A delegations\n\
-         # TYPE a2a_delegations_total counter\n\
-         a2a_delegations_total {}\n\
-         # HELP a2a_delegations_completed Completed A2A delegations\n\
-         # TYPE a2a_delegations_completed counter\n\
-         a2a_delegations_completed {}\n\
-         # HELP a2a_delegations_errors Failed A2A delegations\n\
-         # TYPE a2a_delegations_errors counter\n\
-         a2a_delegations_errors {}\n\
-         # HELP a2a_delegation_duration_avg_ms Average delegation duration in ms\n\
-         # TYPE a2a_delegation_duration_avg_ms gauge\n\
-         a2a_delegation_duration_avg_ms {:.1}\n\
-         {}",
-        snapshot.cpu_usage_percent,
-        (snapshot.memory_used_mb * 1024.0 * 1024.0) as u64,
-        (snapshot.memory_total_mb * 1024.0 * 1024.0) as u64,
-        uptime,
-        a2a_total,
-        a2a_completed,
-        a2a_errors,
-        a2a_avg_ms.unwrap_or(0.0),
-        agent_lines,
-    )
-}
+// ── Prometheus metrics — shared handler from jaskier_core::metrics ────────
+// See `jaskier_core::metrics::metrics_handler` + `HasMetricsState` trait impl
+// in `state.rs`. Route registered in `extra_routes()` above.

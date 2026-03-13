@@ -208,7 +208,7 @@ export const TabBar = memo(() => {
 
   const tabs = useViewStore((s) => s.tabs);
   const activeTabId = useViewStore((s) => s.activeTabId);
-  const chatSessions = useViewStore((s) => s.chatSessions);
+  const sessions = useViewStore((s) => s.sessions);
   const switchTab = useViewStore((s) => s.switchTab);
   const closeTab = useViewStore((s) => s.closeTab);
   const togglePinTab = useViewStore((s) => s.togglePinTab);
@@ -268,8 +268,8 @@ export const TabBar = memo(() => {
   }, []);
 
   const getMessageCount = useCallback(
-    (sessionId: string) => chatSessions.find((s) => s.id === sessionId)?.messageCount ?? 0,
-    [chatSessions],
+    (sessionId: string) => sessions.find((s) => s.id === sessionId)?.messageCount ?? 0,
+    [sessions],
   );
 
   const handleArrowNav = useCallback(

@@ -9,11 +9,11 @@ export function useSidebarLogic() {
 
   // Session sync (DB + localStorage)
   const {
-    activeSessionId,
-    chatSessions,
+    currentSessionId,
+    sessions,
     selectSession,
     openTab,
-    setView,
+    setCurrentView,
     createSessionWithSync,
     deleteSessionWithSync,
     renameSessionWithSync,
@@ -27,10 +27,10 @@ export function useSidebarLogic() {
 
   // Sessions sorted by updatedAt descending, then filtered by search
   const sortedSessions = useMemo(() => {
-    const sorted = [...chatSessions].sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt));
+    const sorted = [...sessions].sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt));
     if (!sessionSearchQuery) return sorted;
     return sorted.filter((s) => s.title.toLowerCase().includes(sessionSearchQuery));
-  }, [chatSessions, sessionSearchQuery]);
+  }, [sessions, sessionSearchQuery]);
 
   // Collapsible sessions toggle
   const [showSessions, setShowSessions] = useState(true);
@@ -43,9 +43,9 @@ export function useSidebarLogic() {
     (sessionId: string) => {
       selectSession(sessionId);
       openTab(sessionId);
-      setView('chat');
+      setCurrentView('chat');
     },
-    [selectSession, openTab, setView],
+    [selectSession, openTab, setCurrentView],
   );
 
   const handleSessionListKeyDown = useCallback(
@@ -84,19 +84,19 @@ export function useSidebarLogic() {
 
   const handleNavClick = useCallback(
     (view: ViewId) => {
-      setView(view);
+      setCurrentView(view);
     },
-    [setView],
+    [setCurrentView],
   );
 
   return {
     // Store state
     currentView,
-    setView,
+    setCurrentView,
 
     // Session state
-    activeSessionId,
-    chatSessions,
+    currentSessionId,
+    sessions,
     sortedSessions,
     sessionSearchQuery,
     focusedSessionIndex,

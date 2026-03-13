@@ -93,6 +93,7 @@
 - Backend module: `backend/src/oauth.rs` â€” Anthropic PKCE flow for Claude MAX Plan flat-rate API access
 - State: `OAuthPkceState` in `state.rs` â†’ `AppState.oauth_pkce: Arc<RwLock<Option<OAuthPkceState>>>`
 - DB table: `ch_oauth_tokens` (singleton row with `id=1` CHECK constraint)
+- Token encryption: AES-256-GCM encryption is used for storing the token securely in the DB
 - Token auto-refresh: `get_valid_access_token()` refreshes expired tokens automatically
 - API endpoints: `GET /api/auth/status`, `POST /api/auth/login`, `POST /api/auth/callback`, `POST /api/auth/logout`
 - Frontend: `src/features/settings/components/OAuthSection.tsx` â€” 3-step PKCE flow (idle â†’ waiting_code â†’ exchanging)

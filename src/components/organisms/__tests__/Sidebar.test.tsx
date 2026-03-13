@@ -27,15 +27,15 @@ vi.mock('@/features/chat/hooks/usePartnerSessions', () => ({
 
 vi.mock('@/features/chat/hooks/useSessionSync', () => ({
   useSessionSync: () => ({
-    chatSessions: [
+    sessions: [
       { id: 'session-1', title: 'Test Session 1', createdAt: 1, updatedAt: 2 },
       { id: 'session-2', title: 'Test Session 2', createdAt: 3, updatedAt: 4 },
     ],
     isLoading: false,
-    activeSessionId: 'session-1',
+    currentSessionId: 'session-1',
     selectSession: vi.fn(),
     openTab: vi.fn(),
-    setView: vi.fn(),
+    setCurrentView: vi.fn(),
     createSessionWithSync: vi.fn(),
     deleteSessionWithSync: vi.fn(),
     renameSessionWithSync: vi.fn(),
@@ -49,18 +49,16 @@ vi.mock('@/stores/viewStore', () => ({
   useViewStore: vi.fn((selector) => {
     const state = {
       currentView: 'chat',
-      setView: mockSetView,
+      setCurrentView: mockSetView,
       selectSession: mockSelectSession,
-      chatSessions: [
+      sessions: [
         { id: 'session-1', title: 'Test Session 1', created_at: '2026-01-01T00:00:00Z', message_count: 3 },
         { id: 'session-2', title: 'Test Session 2', created_at: '2026-01-02T00:00:00Z', message_count: 5 },
       ],
-      activeSessionId: 'session-1',
+      currentSessionId: 'session-1',
       sidebarCollapsed: false,
       setSidebarCollapsed: vi.fn(),
       toggleSidebar: vi.fn(),
-      mobileDrawerOpen: false,
-      setMobileDrawerOpen: vi.fn(),
     };
     return selector ? selector(state) : state;
   }),

@@ -14,7 +14,7 @@ export const OAuthBanner = memo(() => {
   const { t } = useTranslation();
   const theme = useViewTheme();
   const { status, isLoading, isDismissed, dismiss } = useOAuthStatus();
-  const setView = useViewStore((s) => s.setView);
+  const setCurrentView = useViewStore((s) => s.setCurrentView);
 
   const visible = !isLoading && !status?.authenticated && !isDismissed;
 
@@ -67,7 +67,7 @@ export const OAuthBanner = memo(() => {
                     variant="primary"
                     size="sm"
                     rightIcon={<ArrowRight size={13} />}
-                    onClick={() => setView('settings')}
+                    onClick={() => setCurrentView('settings')}
                   >
                     {t('oauth.setupOAuth')}
                   </Button>
