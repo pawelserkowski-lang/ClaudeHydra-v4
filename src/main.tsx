@@ -11,7 +11,7 @@ import { ViewSkeleton } from '@/components/molecules/ViewSkeleton';
 import { AppShell } from '@/components/organisms/AppShell';
 import { queryClient } from '@/shared/api/queryClient';
 import { useViewStore } from '@/stores/viewStore';
-import '@jaskier/i18n';
+import '@/i18n';
 import './styles/globals.css';
 
 // ---------------------------------------------------------------------------
@@ -140,6 +140,34 @@ function App() {
  * - Production: import.meta.hot is undefined (Vite tree-shaking removes block)
  *
  * Reference: https://vitejs.dev/guide/ssr.html#setting-up-the-dev-server
+ *
+ * Sentry Frontend Integration (MON-002)
+ * ======================================
+ * Backend Sentry is integrated via jaskier-core's `sentry` feature flag.
+ * To add frontend error tracking, install @sentry/react per-app:
+ *
+ *   npm install @sentry/react
+ *
+ * Then initialize before createRoot():
+ *
+ *   import * as Sentry from '@sentry/react';
+ *   Sentry.init({
+ *     dsn: import.meta.env.VITE_SENTRY_DSN,
+ *     environment: import.meta.env.MODE, // 'development' | 'production'
+ *     release: `claudehydra-frontend@${import.meta.env.VITE_APP_VERSION ?? '0.0.0'}`,
+ *     integrations: [Sentry.browserTracingIntegration(), Sentry.replayIntegration()],
+ *     tracesSampleRate: import.meta.env.PROD ? 0.2 : 1.0,
+ *     replaysSessionSampleRate: 0.1,
+ *     replaysOnErrorSampleRate: 1.0,
+ *   });
+ *
+ * Wrap <App /> with Sentry.ErrorBoundary for automatic error capture:
+ *   <Sentry.ErrorBoundary fallback={<p>Something went wrong</p>}>
+ *     <App />
+ *   </Sentry.ErrorBoundary>
+ *
+ * Each app needs its own VITE_SENTRY_DSN in .env (never commit DSN values).
+ * See: https://docs.sentry.io/platforms/javascript/guides/react/
  */
 
 const rootElement = document.getElementById('root');

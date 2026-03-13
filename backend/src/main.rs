@@ -127,7 +127,7 @@ async fn main() -> shuttle_axum::ShuttleAxum {
         .expect("Migrations failed");
 
     let log_buffer = std::sync::Arc::new(LogRingBuffer::new(1000));
-    let state = AppState::new(pool, log_buffer);
+    let state = AppState::new(pool, log_buffer).await;
 
     // ── Spawn system monitor (CPU/memory stats, refreshed every 5s) ──
     claudehydra_backend::system_monitor::spawn(state.system_monitor.clone());
@@ -161,7 +161,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("Migration skipped (schema likely exists): {}", e);
     }
 
-    let state = AppState::new(pool, log_buffer);
+    let state = AppState::new(pool, log_buffer).await;
 
     // ── Spawn system monitor (CPU/memory stats, refreshed every 5s) ──
     claudehydra_backend::system_monitor::spawn(state.system_monitor.clone());

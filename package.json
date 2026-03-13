@@ -27,6 +27,7 @@
         "@jaskier/core": "workspace:*",
         "@jaskier/hydra-app": "workspace:*",
         "@jaskier/i18n": "workspace:*",
+        "@jaskier/state": "workspace:*",
         "@jaskier/ui": "workspace:*",
         "@tanstack/react-query": "^5.90.21",
         "@tanstack/react-query-devtools": "^5.91.3",

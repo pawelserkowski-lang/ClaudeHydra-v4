@@ -82,6 +82,10 @@ async fn request_id_middleware(
         handlers::system_audit,
         // Agents
         handlers::list_agents,
+        handlers::get_agent,
+        handlers::create_agent,
+        handlers::update_agent,
+        handlers::delete_agent,
         handlers::list_delegations,
         handlers::delegations_stream,
         // Chat
@@ -112,6 +116,8 @@ async fn request_id_middleware(
         models::NetworkMetric,
         // Agents
         models::WitcherAgent,
+        models::CreateAgentRequest,
+        models::UpdateAgentRequest,
         // Chat
         models::ChatRequest,
         models::ChatMessage,
@@ -290,7 +296,16 @@ fn general_protected_routes() -> Router<AppState> {
             "/api/logs/backend",
             get(logs::backend_logs::<AppState>).delete(logs::clear_backend_logs::<AppState>),
         )
-        .route("/api/agents", get(handlers::list_agents))
+        .route(
+            "/api/agents",
+            get(handlers::list_agents).post(handlers::create_agent),
+        )
+        .route(
+            "/api/agents/{id}",
+            get(handlers::get_agent)
+                .put(handlers::update_agent)
+                .delete(handlers::delete_agent),
+        )
         .route("/api/agents/refresh", post(handlers::refresh_agents))
         .route("/api/claude/models", get(handlers::claude_models))
         .route("/api/models", get(model_registry::list_models))
@@ -354,7 +369,7 @@ fn general_protected_routes() -> Router<AppState> {
             get(mcp::config::list_server_tools_handler),
         )
         .route("/api/mcp/tools", get(mcp::config::list_all_tools_handler))
-        .route("/mcp", post(mcp::server::mcp_handler))
+        .route("/mcp", post(mcp::server::mcp_handler::<AppState>))
         // OCR — text extraction from images and PDFs
         .route("/api/ocr", post(ocr::ocr))
         .route("/api/ocr/stream", post(ocr::ocr_stream))

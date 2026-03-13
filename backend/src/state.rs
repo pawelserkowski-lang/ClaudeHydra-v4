@@ -89,10 +89,9 @@ impl AppState {
         tracing::info!("Backend marked as READY");
     }
 
-    /// Refresh agents list from the hardcoded definitions.
-    /// In the future, this could reload from DB.
+    /// Refresh agents list — loads from DB, falls back to hardcoded defaults.
     pub async fn refresh_agents(&self) {
-        let new_agents = init_witcher_agents();
+        let new_agents = load_agents_from_db(&self.db).await;
         let count = new_agents.len();
         let mut lock = self.agents.write().await;
         *lock = new_agents;
@@ -101,7 +100,7 @@ impl AppState {
 }
 
 impl AppState {
-    pub fn new(db: PgPool, log_buffer: Arc<LogRingBuffer>) -> Self {
+    pub async fn new(db: PgPool, log_buffer: Arc<LogRingBuffer>) -> Self {
         let mut api_keys = HashMap::new();
         if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
             api_keys.insert("ANTHROPIC_API_KEY".to_string(), key);
@@ -117,7 +116,7 @@ impl AppState {
             tracing::info!("AUTH_SECRET not set — authentication disabled (dev mode)");
         }
 
-        let agents = Arc::new(RwLock::new(init_witcher_agents()));
+        let agents = Arc::new(RwLock::new(load_agents_from_db(&db).await));
 
         tracing::info!(
             "AppState initialised — keys: {:?}",
@@ -325,6 +324,83 @@ impl jaskier_browser::watchdog::HasWatchdogState for AppState {
     }
 }
 
+// ── jaskier-core MCP trait implementations ───────────────────────────────
+
+impl jaskier_core::mcp::config::HasMcpState for AppState {
+    fn db(&self) -> &sqlx::PgPool { &self.db }
+    fn auth_secret_is_some(&self) -> bool { self.auth_secret.is_some() }
+    fn mcp_client(&self) -> &Arc<crate::mcp::client::McpClientManager> { &self.mcp_client }
+    fn mcp_servers_table(&self) -> &'static str { "ch_mcp_servers" }
+    fn mcp_tools_table(&self) -> &'static str { "ch_mcp_discovered_tools" }
+}
+
+impl jaskier_core::mcp::server::HasMcpServerState for AppState {
+    fn mcp_server_name(&self) -> &'static str { "ClaudeHydra" }
+    fn mcp_server_version(&self) -> &'static str { "4.0.0" }
+    fn mcp_server_instructions(&self) -> &'static str {
+        "ClaudeHydra AI Swarm Control Center — Anthropic Claude-powered multi-agent system"
+    }
+    fn mcp_uri_scheme(&self) -> &'static str { "claudehydra" }
+
+    fn mcp_settings_table(&self) -> &'static str { "ch_settings" }
+    fn mcp_sessions_table(&self) -> &'static str { "ch_sessions" }
+
+    async fn mcp_agents_json(&self) -> serde_json::Value {
+        let agents = self.agents.read().await;
+        serde_json::json!(agents.iter().map(|a| {
+            serde_json::json!({
+                "id": a.id,
+                "name": a.name,
+                "role": a.role,
+                "status": a.status,
+                "tier": a.tier,
+            })
+        }).collect::<Vec<_>>())
+    }
+    fn mcp_model_cache(&self) -> &Arc<RwLock<crate::model_registry::ModelCache>> { &self.model_cache }
+    fn mcp_start_time(&self) -> std::time::Instant { self.start_time }
+    fn mcp_is_ready(&self) -> bool { self.is_ready() }
+
+    async fn mcp_system_snapshot_json(&self) -> serde_json::Value {
+        let snap = self.system_monitor.read().await;
+        serde_json::json!({
+            "cpu_usage_percent": snap.cpu_usage_percent,
+            "memory_used_mb": snap.memory_used_mb,
+            "memory_total_mb": snap.memory_total_mb,
+            "platform": snap.platform,
+        })
+    }
+
+    fn mcp_tool_definitions(&self) -> Vec<serde_json::Value> {
+        self.tool_executor
+            .tool_definitions()
+            .into_iter()
+            .map(|td| {
+                serde_json::json!({
+                    "name": td.name,
+                    "description": td.description,
+                    "inputSchema": td.input_schema,
+                })
+            })
+            .collect()
+    }
+
+    async fn mcp_execute_tool(
+        &self,
+        name: &str,
+        args: &serde_json::Value,
+        working_directory: &str,
+    ) -> Result<(String, Option<serde_json::Value>), String> {
+        let executor = self.tool_executor.with_working_directory(working_directory);
+        let (result, is_error) = executor.execute_with_state(name, args, self).await;
+        if is_error {
+            Err(result)
+        } else {
+            Ok((result, None))
+        }
+    }
+}
+
 // ── jaskier-core sessions trait implementation ───────────────────────────────
 
 impl jaskier_core::sessions::HasSessionsState for AppState {
@@ -417,6 +493,31 @@ impl jaskier_core::sessions::HasSessionsState for AppState {
         }
 
         Some(raw_title.to_string())
+    }
+}
+
+/// Load agents from `ch_agents_config` table. Falls back to hardcoded defaults
+/// when the table doesn't exist yet or is empty.
+async fn load_agents_from_db(db: &PgPool) -> Vec<WitcherAgent> {
+    match sqlx::query_as::<_, crate::models::AgentConfigRow>(
+        "SELECT id, name, role, tier, status, description, model, created_at, updated_at \
+         FROM ch_agents_config ORDER BY id",
+    )
+    .fetch_all(db)
+    .await
+    {
+        Ok(rows) if !rows.is_empty() => {
+            tracing::info!("Loaded {} agents from DB (ch_agents_config)", rows.len());
+            rows.into_iter().map(WitcherAgent::from).collect()
+        }
+        Ok(_) => {
+            tracing::info!("ch_agents_config is empty — using hardcoded defaults");
+            init_witcher_agents()
+        }
+        Err(e) => {
+            tracing::warn!("Failed to load agents from DB ({}), using hardcoded defaults", e);
+            init_witcher_agents()
+        }
     }
 }
 

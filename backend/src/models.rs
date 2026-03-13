@@ -422,3 +422,62 @@ pub enum WsServerMessage {
     /// Server-initiated heartbeat to keep the connection alive.
     Heartbeat,
 }
+
+// ── Agent Config (DB-driven) ────────────────────────────────────────────
+
+/// DB row for agent configuration (ch_agents_config table).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AgentConfigRow {
+    pub id: String,
+    pub name: String,
+    pub role: String,
+    pub tier: String,
+    pub status: String,
+    pub description: String,
+    pub model: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl From<AgentConfigRow> for WitcherAgent {
+    fn from(row: AgentConfigRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            role: row.role,
+            tier: row.tier,
+            status: row.status,
+            description: row.description,
+            model: row.model,
+        }
+    }
+}
+
+/// Request body for creating a new agent.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateAgentRequest {
+    pub name: String,
+    pub role: String,
+    pub tier: String,
+    #[serde(default = "default_agent_status")]
+    pub status: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub model: String,
+}
+
+fn default_agent_status() -> String {
+    "active".to_string()
+}
+
+/// Request body for updating an existing agent (partial update).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UpdateAgentRequest {
+    pub name: Option<String>,
+    pub role: Option<String>,
+    pub tier: Option<String>,
+    pub status: Option<String>,
+    pub description: Option<String>,
+    pub model: Option<String>,
+}

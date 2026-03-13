@@ -1,37 +1,24 @@
 /**
- * Settings TanStack Query hooks.
- * Fetches, updates app settings and manages API key storage.
+ * ClaudeHydra — Settings hooks.
+ * Thin wrapper around @jaskier/core useSettingsQuery with CH-specific telemetry sync.
  */
 
-import { useQuery } from '@tanstack/react-query';
-import { apiGet } from '@/shared/api/client';
+import { createTelemetryChecker, useSettingsQuery as useSharedSettingsQuery } from '@jaskier/core';
+import { apiGet, apiPost } from '@/shared/api/client';
 import type { Settings } from '@/shared/api/schemas';
 
 /** localStorage key for telemetry setting (read by ErrorBoundary class component) */
 const TELEMETRY_LS_KEY = 'claude-hydra-telemetry';
 
 /** Check if telemetry is enabled (safe for class components / non-hook contexts) */
-export function isTelemetryEnabled(): boolean {
-  try {
-    return localStorage.getItem(TELEMETRY_LS_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
+export const isTelemetryEnabled = createTelemetryChecker(TELEMETRY_LS_KEY);
 
-/** GET /api/settings */
+const SETTINGS_CONFIG = {
+  telemetryLocalStorageKey: TELEMETRY_LS_KEY,
+  apiClient: { apiGet, apiPost },
+} as const;
+
+/** GET /api/settings — with telemetry sync to localStorage */
 export function useSettingsQuery() {
-  return useQuery<Settings>({
-    queryKey: ['settings'],
-    queryFn: async () => {
-      const settings = await apiGet<Settings>('/api/settings');
-      // Sync telemetry flag to localStorage for non-hook consumers (ErrorBoundary)
-      try {
-        localStorage.setItem(TELEMETRY_LS_KEY, String(settings.telemetry ?? false));
-      } catch {
-        /* ignore */
-      }
-      return settings;
-    },
-  });
+  return useSharedSettingsQuery<Settings>(SETTINGS_CONFIG);
 }

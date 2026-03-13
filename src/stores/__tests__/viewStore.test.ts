@@ -33,6 +33,7 @@ beforeEach(() => {
     sessions: [],
     tabs: [],
     activeTabId: null,
+    chatHistory: {},
   });
   // Clear persisted storage so state doesn't leak between tests
   localStorage.removeItem('claude-hydra-v4-view');
@@ -122,7 +123,7 @@ describe('viewStore — createSession', () => {
     expect((id as string).length).toBeGreaterThan(0);
   });
 
-  it('adds the new session to sessions', () => {
+  it('adds the new session to sessions with a title', () => {
     const id = act('createSession', 'My Chat') as string;
     const session = getState().sessions.find((s) => s.id === id);
     expect(session).toBeDefined();
@@ -148,10 +149,10 @@ describe('viewStore — createSession', () => {
     expect(getState().currentView).toBe('chat');
   });
 
-  it('generates a default title when none is provided', () => {
+  it('generates "New Chat" title when none is provided', () => {
     act('createSession');
     const session = getState().sessions[0];
-    expect(session?.title).toBe('Chat 1');
+    expect(session?.title).toBe('New Chat');
   });
 
   it('prepends new sessions (most recent first)', () => {
@@ -186,7 +187,7 @@ describe('viewStore — deleteSession', () => {
     expect(getState().currentSessionId).toBe(id2);
 
     act('deleteSession', id2);
-    // should fall back to remaining tab
+    // should fall back to remaining session
     expect(getState().currentSessionId).toBe(id1);
   });
 
