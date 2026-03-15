@@ -295,6 +295,11 @@ export default defineConfig(({ mode }) => {
             if (id.includes('/packages/core/') || id.includes('/packages/state/') || id.includes('/packages/i18n/')) {
               return 'shared-core';
             }
+            // Markdown renderers are lazy-loaded — keep them out of shared-ui
+            // so vendor-markdown is NOT in the critical path (saves ~329 KB)
+            if (id.includes('MarkdownRenderer')) {
+              return undefined;
+            }
             if (
               id.includes('/packages/hydra-app/') ||
               id.includes('/packages/chat-module/') ||
