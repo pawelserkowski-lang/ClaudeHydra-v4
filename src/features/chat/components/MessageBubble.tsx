@@ -1,5 +1,6 @@
 ﻿import { splitToolOutput, stripParallelHeader, type ToolSegment, useViewTheme } from '@jaskier/chat-module';
-import { AgentAvatar, BaseMessageBubble, cn } from '@jaskier/ui';
+import { AgentAvatar, cn } from '@jaskier/ui';
+import { BaseMessageBubble } from '@jaskier/ui/markdown';
 import { RefreshCw } from 'lucide-react';
 import { type MouseEvent, memo, useDeferredValue, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';

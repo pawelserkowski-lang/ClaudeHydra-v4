@@ -224,6 +224,10 @@ export default defineConfig(({ mode }) => {
         external: (id: string) => id.endsWith('.node') || id.startsWith('/wasm/') || id.includes('../pkg'),
         output: {
           manualChunks(id: string) {
+            // NOTE: BaseMessageBubble/BaseCodeBlock are NOT carved out from shared-ui
+            // because the React Compiler prevents Rollup from splitting them.
+            // Instead, vendor-markdown is loaded on-demand via dynamic import() in
+            // BaseMessageBubble itself (see MarkdownRenderer.tsx lazy wrapper).
             // ── React core ──────────────────────────────────────────
             if (
               id.includes('/node_modules/react-dom/') ||
@@ -295,12 +299,11 @@ export default defineConfig(({ mode }) => {
             if (id.includes('/packages/core/') || id.includes('/packages/state/') || id.includes('/packages/i18n/')) {
               return 'shared-core';
             }
-            // Markdown renderers are lazy-loaded — keep them out of shared-ui
-            // so vendor-markdown is NOT in the critical path (saves ~329 KB).
-            // Must return an explicit chunk name (not undefined) to prevent
-            // Rollup from inlining them back into shared-ui.
+            // MarkdownRenderer is dynamically imported by BaseMessageBubble.
+            // Force it into its own chunk so vendor-markdown (329 KB) stays
+            // out of the critical path — loaded only when chat view renders.
             if (id.includes('MarkdownRenderer')) {
-              return 'lazy-markdown-renderer';
+              return 'lazy-markdown';
             }
             if (
               id.includes('/packages/hydra-app/') ||
