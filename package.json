@@ -104,7 +104,13 @@
             "@jaskier/ui"
         ],
         "overrides": {
-            "@conventional-changelog/git-client": ">=2.0.0"
+            "@conventional-changelog/git-client": ">=2.0.0",
+            "undici": ">=7.24.0",
+            "serialize-javascript": ">=7.0.3"
         }
+    },
+    "overrides": {
+        "undici": ">=7.24.0",
+        "serialize-javascript": ">=7.0.3"
     }
 }
