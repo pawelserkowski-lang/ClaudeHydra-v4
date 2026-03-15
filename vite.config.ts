@@ -1,30 +1,130 @@
 /// <reference types="vitest/config" />
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import { resolve } from 'path';
+import { readdirSync, readFileSync, statSync, writeFileSync } from 'fs';
+import { join, resolve } from 'path';
 import { visualizer } from 'rollup-plugin-visualizer';
 import type { Plugin } from 'vite';
 import { defineConfig, loadEnv } from 'vite';
-import { VitePWA } from 'vite-plugin-pwa';
 import topLevelAwait from 'vite-plugin-top-level-await';
 import wasm from 'vite-plugin-wasm';
 
 /**
- * Stub plugin for virtual:pwa-register when vite-plugin-pwa is disabled.
- * Returns a no-op registerSW function so the app builds and runs without PWA.
+ * Generates sw-manifest.json in dist/ after build completes.
+ * This manifest is fetched by public/sw.js at runtime for precaching.
+ * Replaces vite-plugin-pwa which was incompatible with Vite 6+ monorepo
+ * (secondary Rollup build resolved wrong Vite version).
  */
-function pwaRegisterStub(): Plugin {
+function swManifestPlugin(): Plugin {
   return {
-    name: 'pwa-register-stub',
-    resolveId(id) {
-      if (id === 'virtual:pwa-register') return '\0virtual:pwa-register';
-      return null;
-    },
-    load(id) {
-      if (id === '\0virtual:pwa-register') {
-        return 'export function registerSW() { return () => {}; }';
+    name: 'sw-manifest-generator',
+    apply: 'build',
+    closeBundle() {
+      const distDir = resolve(__dirname, 'dist');
+      const entries: Array<{ url: string; revision: string | null }> = [];
+
+      // Collect hashed assets (JS/CSS) — no revision needed (hash in filename)
+      try {
+        const assetsDir = join(distDir, 'assets');
+        for (const file of readdirSync(assetsDir)) {
+          if (/\.(js|css)$/.test(file) && !file.endsWith('.map')) {
+            entries.push({ url: `/assets/${file}`, revision: null });
+          }
+        }
+      } catch {
+        // No assets dir — skip
       }
-      return null;
+
+      // Collect WASM files
+      try {
+        const wasmDir = join(distDir, 'wasm');
+        for (const file of readdirSync(wasmDir)) {
+          if (file.endsWith('.wasm') || file.endsWith('.js')) {
+            const stat = statSync(join(wasmDir, file));
+            entries.push({ url: `/wasm/${file}`, revision: stat.mtimeMs.toString(36) });
+          }
+        }
+      } catch {
+        // No wasm dir — skip
+      }
+
+      // index.html — needs revision since filename doesn't change
+      try {
+        const stat = statSync(join(distDir, 'index.html'));
+        entries.push({ url: '/index.html', revision: stat.mtimeMs.toString(36) });
+      } catch {
+        // No index.html — skip
+      }
+
+      // manifest.json
+      try {
+        const stat = statSync(join(distDir, 'manifest.json'));
+        entries.push({ url: '/manifest.json', revision: stat.mtimeMs.toString(36) });
+      } catch {
+        // skip
+      }
+
+      writeFileSync(join(distDir, 'sw-manifest.json'), JSON.stringify(entries, null, 2));
+      console.log(`[sw-manifest] Generated ${entries.length} precache entries`);
+    },
+  };
+}
+
+/**
+ * Vite plugin to serve pre-compressed WASM files (.br / .gz) in dev mode.
+ *
+ * When a browser requests a .wasm file and sends Accept-Encoding: br/gzip,
+ * this middleware serves the pre-compressed version with correct Content-Encoding
+ * header, saving ~800 KB of transfer even during local development.
+ *
+ * In production, Fly.io's edge CDN handles this automatically for static assets.
+ */
+function wasmPrecompressedServe(): Plugin {
+  return {
+    name: 'wasm-precompressed-serve',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (!req.url?.endsWith('.wasm')) {
+          next();
+          return;
+        }
+
+        const acceptEncoding = req.headers['accept-encoding'] || '';
+        const publicDir = resolve(__dirname, 'public');
+        const wasmPath = resolve(publicDir, req.url.slice(1));
+
+        // Try Brotli first (best ratio: ~25% of original)
+        if (acceptEncoding.includes('br')) {
+          try {
+            const brData = readFileSync(`${wasmPath}.br`);
+            res.setHeader('Content-Type', 'application/wasm');
+            res.setHeader('Content-Encoding', 'br');
+            res.setHeader('Content-Length', String(brData.byteLength));
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+            res.end(brData);
+            return;
+          } catch {
+            // .br file not available — try gzip
+          }
+        }
+
+        // Try Gzip (fallback: ~38% of original)
+        if (acceptEncoding.includes('gzip')) {
+          try {
+            const gzData = readFileSync(`${wasmPath}.gz`);
+            res.setHeader('Content-Type', 'application/wasm');
+            res.setHeader('Content-Encoding', 'gzip');
+            res.setHeader('Content-Length', String(gzData.byteLength));
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+            res.end(gzData);
+            return;
+          } catch {
+            // .gz file not available — fall through to default
+          }
+        }
+
+        next();
+      });
     },
   };
 }
@@ -35,50 +135,23 @@ export default defineConfig(({ mode }) => {
   const backendUrl = env.VITE_BACKEND_URL || 'http://localhost:8082';
   const partnerBackendUrl = env.VITE_PARTNER_BACKEND_URL || 'http://localhost:8081';
 
-  // vite-plugin-pwa 0.21 is incompatible with Vite 6+ Environment API in monorepo
-  // with mixed Vite versions (6.4 + 7.3). The secondary Rollup build picks up
-  // vite@7.3's node:module chunks and fails with "createRequire" not exported.
-  // PWA plugin is only loaded in dev mode; production builds use a stub.
-  // Re-enable for production when vite-plugin-pwa releases Vite 6/7 compatible version.
   const isProd = mode === 'production';
 
   return {
     plugins: [
       wasm(),
       topLevelAwait(),
+      wasmPrecompressedServe(),
       react({
         babel: {
           plugins: [['babel-plugin-react-compiler', { target: '19' }]],
         },
       }),
       tailwindcss(),
-      // PWA: use real plugin in dev, stub in production build
-      ...(isProd
-        ? [pwaRegisterStub()]
-        : [
-            VitePWA({
-              registerType: 'autoUpdate',
-              workbox: {
-                globPatterns: ['**/*.{js,css,html,ico,png,svg,wasm}'],
-                runtimeCaching: [
-                  {
-                    urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
-                    handler: 'CacheFirst',
-                    options: {
-                      cacheName: 'google-fonts-cache',
-                      expiration: {
-                        maxEntries: 10,
-                        maxAgeSeconds: 60 * 60 * 24 * 365, // <== 365 days
-                      },
-                      cacheableResponse: {
-                        statuses: [0, 200],
-                      },
-                    },
-                  },
-                ],
-              },
-            }),
-          ]),
+      // PWA: custom SW manifest generator replaces vite-plugin-pwa (which was
+      // incompatible with Vite 6+ monorepo due to secondary Rollup build
+      // resolving wrong Vite version). The actual SW lives in public/sw.js.
+      swManifestPlugin(),
       // Bundle size tracking: always generate stats.html on build, auto-open in analyze mode
       ...(isProd
         ? [(visualizer as any)({ open: false, filename: 'dist/stats.html', gzipSize: true, brotliSize: true })]

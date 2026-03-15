@@ -17,8 +17,6 @@ import { queryClient } from '@/shared/api/queryClient';
 import { useViewStore } from '@/stores/viewStore';
 import '@/i18n';
 import './styles/globals.css';
-// @ts-expect-error
-import { registerSW } from 'virtual:pwa-register';
 
 // Telemetry — loaded async to avoid blocking initial render (~300kB OTel + Zone.js)
 import('@jaskier/core').then(({ initTelemetry }) => {
@@ -27,17 +25,38 @@ import('@jaskier/core').then(({ initTelemetry }) => {
   });
 });
 
-// Register Service Worker for PWA
-const updateSW = registerSW({
-  onNeedRefresh() {
-    if (confirm('Nowa wersja aplikacji jest dostępna. Czy chcesz odświeżyć?')) {
-      updateSW(true);
-    }
-  },
-  onOfflineReady() {
-    console.log('Aplikacja jest gotowa do działania w trybie offline.');
-  },
-});
+// Register Service Worker for PWA — direct registration replaces vite-plugin-pwa
+// (which was incompatible with Vite 6+ monorepo). SW file: public/sw.js
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('/sw.js')
+      .then((registration) => {
+        // Auto-update: check for new SW every 60s
+        setInterval(() => registration.update(), 60_000);
+
+        registration.addEventListener('updatefound', () => {
+          const newWorker = registration.installing;
+          if (!newWorker) return;
+
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              // New version available — prompt user
+              if (confirm('Nowa wersja aplikacji jest dostępna. Czy chcesz odświeżyć?')) {
+                newWorker.postMessage({ type: 'SKIP_WAITING' });
+                window.location.reload();
+              }
+            }
+          });
+        });
+
+        console.log('Service Worker zarejestrowany pomyślnie.');
+      })
+      .catch((error) => {
+        console.warn('Rejestracja Service Worker nie powiodła się:', error);
+      });
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Lazy-loaded views — each chunk is fetched on demand

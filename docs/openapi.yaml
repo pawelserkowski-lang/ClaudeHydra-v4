@@ -1,0 +1,3249 @@
+openapi: "3.0.3"
+info:
+  title: ClaudeHydra v4 API
+  version: "4.0.0"
+  description: |
+    AI Swarm Control Center — Backend API for ClaudeHydra v4.
+    Built with Rust/Axum 0.8, PostgreSQL 17, and a shared Jaskier crate ecosystem.
+
+    Authentication uses either Anthropic OAuth PKCE (Claude MAX Plan) or
+    an `x-api-key` header for programmatic access. Most endpoints require
+    authentication unless noted otherwise.
+  license:
+    name: MIT
+  contact:
+    name: EPS AI Solutions
+    url: https://github.com/EPS-AI-SOLUTIONS/ClaudeHydra
+
+servers:
+  - url: http://localhost:8082
+    description: Local development
+  - url: https://claudehydra-v4-backend.fly.dev
+    description: Production (Fly.io)
+
+# ===========================================================================
+# Security Schemes
+# ===========================================================================
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Anthropic OAuth PKCE access token (Claude MAX Plan)
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: API key set via POST /api/settings/api-key
+
+  # =========================================================================
+  # Schemas
+  # =========================================================================
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded]
+        version:
+          type: string
+          example: "4.0.0"
+        app:
+          type: string
+          example: "ClaudeHydra v4"
+        uptime_seconds:
+          type: integer
+          format: int64
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderInfo"
+        browser_proxy:
+          $ref: "#/components/schemas/BrowserProxyStatus"
+
+    ProviderInfo:
+      type: object
+      properties:
+        name:
+          type: string
+          example: anthropic
+        available:
+          type: boolean
+
+    BrowserProxyStatus:
+      type: object
+      description: Browser proxy status (null if not enabled)
+      nullable: true
+
+    ChatRequest:
+      type: object
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+        model:
+          type: string
+          description: Model ID override (default uses coordinator tier)
+          example: claude-sonnet-4-6
+        temperature:
+          type: number
+          format: double
+          minimum: 0.0
+          maximum: 2.0
+        max_tokens:
+          type: integer
+          format: int32
+        stream:
+          type: boolean
+          description: Hint for non-stream endpoint; /stream always streams
+        tools_enabled:
+          type: boolean
+          description: Enable agent tool use (filesystem, git, GitHub, etc.)
+        session_id:
+          type: string
+          format: uuid
+          description: Associate the chat with an existing session
+
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [user, assistant, system]
+        content:
+          type: string
+        model:
+          type: string
+        timestamp:
+          type: string
+
+    ChatResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        message:
+          $ref: "#/components/schemas/ChatMessage"
+        model:
+          type: string
+        usage:
+          $ref: "#/components/schemas/UsageInfo"
+
+    UsageInfo:
+      type: object
+      properties:
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+
+    ClaudeModelInfo:
+      type: object
+      properties:
+        id:
+          type: string
+          example: claude-sonnet-4-6
+        name:
+          type: string
+          example: Claude Sonnet
+        tier:
+          type: string
+          enum: [Commander, Coordinator, Executor, Flash]
+        provider:
+          type: string
+          example: anthropic
+        available:
+          type: boolean
+
+    AppSettings:
+      type: object
+      properties:
+        theme:
+          type: string
+          example: dark
+        language:
+          type: string
+          example: pl
+        default_model:
+          type: string
+          example: claude-sonnet-4-6
+        auto_start:
+          type: boolean
+        welcome_message:
+          type: string
+        working_directory:
+          type: string
+          description: Working directory for filesystem tools (empty = default)
+        max_iterations:
+          type: integer
+          default: 10
+          minimum: 1
+          maximum: 50
+        temperature:
+          type: number
+          format: double
+          default: 0.7
+          minimum: 0.0
+          maximum: 2.0
+        max_tokens:
+          type: integer
+          default: 4096
+          minimum: 256
+          maximum: 16384
+        custom_instructions:
+          type: string
+        auto_updater:
+          type: boolean
+          default: true
+        telemetry:
+          type: boolean
+          default: false
+        compaction_threshold:
+          type: integer
+          default: 25
+          minimum: 10
+          maximum: 100
+        compaction_keep:
+          type: integer
+          default: 15
+          minimum: 5
+          maximum: 50
+
+    ApiKeyRequest:
+      type: object
+      required: [provider, key]
+      properties:
+        provider:
+          type: string
+          example: ANTHROPIC_API_KEY
+        key:
+          type: string
+
+    SessionSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        message_count:
+          type: integer
+        working_directory:
+          type: string
+
+    Session:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        working_directory:
+          type: string
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/HistoryEntry"
+        pagination:
+          type: object
+          properties:
+            total:
+              type: integer
+            limit:
+              type: integer
+            offset:
+              type: integer
+
+    HistoryEntry:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        role:
+          type: string
+        content:
+          type: string
+        model:
+          type: string
+        agent:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        tool_interactions:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/ToolInteractionInfo"
+
+    ToolInteractionInfo:
+      type: object
+      properties:
+        tool_use_id:
+          type: string
+        tool_name:
+          type: string
+        tool_input:
+          type: object
+        result:
+          type: string
+          nullable: true
+        is_error:
+          type: boolean
+
+    CreateSessionRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+
+    UpdateSessionRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+
+    AddMessageRequest:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+        content:
+          type: string
+          maxLength: 100000
+        model:
+          type: string
+        agent:
+          type: string
+        tool_interactions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolInteractionInfo"
+
+    WitcherAgent:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+        tier:
+          type: string
+          enum: [commander, coordinator, executor]
+        status:
+          type: string
+          enum: [active, inactive]
+        description:
+          type: string
+        model:
+          type: string
+
+    CreateAgentRequest:
+      type: object
+      required: [name, role, tier]
+      properties:
+        name:
+          type: string
+        role:
+          type: string
+        tier:
+          type: string
+        status:
+          type: string
+          default: active
+        description:
+          type: string
+        model:
+          type: string
+
+    UpdateAgentRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        role:
+          type: string
+        tier:
+          type: string
+        status:
+          type: string
+        description:
+          type: string
+        model:
+          type: string
+
+    ModelInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        display_name:
+          type: string
+        provider:
+          type: string
+        input_token_limit:
+          type: integer
+        output_token_limit:
+          type: integer
+
+    ResolvedModels:
+      type: object
+      properties:
+        commander:
+          $ref: "#/components/schemas/ModelInfo"
+        coordinator:
+          $ref: "#/components/schemas/ModelInfo"
+        executor:
+          $ref: "#/components/schemas/ModelInfo"
+        flash:
+          $ref: "#/components/schemas/ModelInfo"
+
+    PinModelRequest:
+      type: object
+      required: [use_case, model_id]
+      properties:
+        use_case:
+          type: string
+          example: coordinator
+        model_id:
+          type: string
+          example: claude-sonnet-4-6
+
+    SystemStats:
+      type: object
+      properties:
+        cpu_usage_percent:
+          type: number
+          format: float
+        memory_used_mb:
+          type: number
+          format: double
+        memory_total_mb:
+          type: number
+          format: double
+        platform:
+          type: string
+
+    AddTagsRequest:
+      type: object
+      required: [tags]
+      properties:
+        tags:
+          type: array
+          items:
+            type: string
+            maxLength: 50
+
+    SearchResult:
+      type: object
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        session_title:
+          type: string
+        message_id:
+          type: string
+          format: uuid
+          nullable: true
+        message_preview:
+          type: string
+          nullable: true
+        message_role:
+          type: string
+          nullable: true
+        message_timestamp:
+          type: string
+          format: date-time
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+        rank:
+          type: number
+          format: float
+          nullable: true
+
+    GatewayChatRequest:
+      type: object
+      required: [messages]
+      properties:
+        model:
+          type: string
+          description: Provider-specific model ID
+        messages:
+          type: array
+          items:
+            type: object
+            required: [role, content]
+            properties:
+              role:
+                type: string
+              content:
+                type: string
+        temperature:
+          type: number
+          format: double
+        max_tokens:
+          type: integer
+        stream:
+          type: boolean
+
+    GatewayProviderInfo:
+      type: object
+      properties:
+        provider:
+          type: string
+          enum: [anthropic, google, openai, xai, deepseek, ollama]
+        plan_name:
+          type: string
+        auth_type:
+          type: string
+        is_connected:
+          type: boolean
+        plan_tier:
+          type: string
+          nullable: true
+        monthly_cost_cents:
+          type: integer
+        last_verified:
+          type: string
+          nullable: true
+        last_error:
+          type: string
+          nullable: true
+        model_tiers:
+          type: object
+          properties:
+            commander:
+              type: string
+            coordinator:
+              type: string
+            executor:
+              type: string
+
+    DelegateRequest:
+      type: object
+      required: [prompt]
+      properties:
+        prompt:
+          type: string
+        pattern:
+          type: string
+          enum: [parallel, sequential, review, hierarchical, fan_out]
+          default: parallel
+        targets:
+          type: array
+          items:
+            type: string
+          description: Target peer IDs (e.g. ["geminihydra", "grokhydra"])
+        timeout_secs:
+          type: integer
+          default: 120
+        attachments:
+          type: array
+          items:
+            type: object
+
+    SwarmTask:
+      type: object
+      properties:
+        id:
+          type: string
+        pattern:
+          type: string
+        source_peer:
+          type: string
+        target_peers:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+        results:
+          type: array
+          items:
+            type: object
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        duration_ms:
+          type: integer
+          nullable: true
+
+    SwarmPeer:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        url:
+          type: string
+        status:
+          type: string
+          enum: [online, offline, unknown]
+        version:
+          type: string
+
+    CreateSandboxRequest:
+      type: object
+      required: [language]
+      properties:
+        language:
+          type: string
+          enum: [node, python, rust, bash]
+        limits:
+          $ref: "#/components/schemas/ResourceLimits"
+
+    ResourceLimits:
+      type: object
+      properties:
+        timeout_secs:
+          type: integer
+          default: 30
+          maximum: 120
+        memory_mb:
+          type: integer
+          default: 256
+        cpu_cores:
+          type: number
+          default: 0.5
+
+    ExecuteCodeRequest:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          maxLength: 65536
+        session_id:
+          type: string
+          description: Reuse an existing sandbox session
+        language:
+          type: string
+          enum: [node, python, rust, bash]
+          description: Required for ephemeral (no session_id) execution
+        timeout_secs:
+          type: integer
+          default: 30
+          maximum: 120
+
+    SandboxSession:
+      type: object
+      properties:
+        id:
+          type: string
+        container_id:
+          type: string
+          nullable: true
+        language:
+          type: string
+        status:
+          type: string
+          enum: [creating, ready, error, destroyed]
+        resource_limits:
+          $ref: "#/components/schemas/ResourceLimits"
+        created_at:
+          type: string
+          format: date-time
+        last_execution_at:
+          type: string
+          format: date-time
+          nullable: true
+        execution_count:
+          type: integer
+
+    SandboxExecution:
+      type: object
+      properties:
+        id:
+          type: string
+        session_id:
+          type: string
+        language:
+          type: string
+        code:
+          type: string
+        stdout:
+          type: string
+        stderr:
+          type: string
+        exit_code:
+          type: integer
+        duration_ms:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    PruningConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        similarity_threshold:
+          type: number
+          format: double
+          minimum: 0.5
+          maximum: 1.0
+        min_age_hours:
+          type: integer
+        max_memory_entries:
+          type: integer
+          minimum: 10
+        auto_prune_interval_secs:
+          type: integer
+          minimum: 300
+        max_cluster_size:
+          type: integer
+          minimum: 2
+          maximum: 20
+
+    AddPromptRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+
+    WsClientMessage:
+      type: object
+      description: |
+        WebSocket client-to-server messages (JSON, tagged by `type` field).
+        Types: execute, cancel, ping
+      properties:
+        type:
+          type: string
+          enum: [execute, cancel, ping]
+        prompt:
+          type: string
+        model:
+          type: string
+        tools_enabled:
+          type: boolean
+        session_id:
+          type: string
+
+    WsServerMessage:
+      type: object
+      description: |
+        WebSocket server-to-client messages (JSON, tagged by `type` field).
+        Types: start, token, complete, tool_call, tool_result, tool_progress,
+        iteration, error, pong, heartbeat, fallback, view_hint
+      properties:
+        type:
+          type: string
+          enum:
+            - start
+            - token
+            - complete
+            - tool_call
+            - tool_result
+            - tool_progress
+            - iteration
+            - error
+            - pong
+            - heartbeat
+            - fallback
+            - view_hint
+
+# ===========================================================================
+# Paths
+# ===========================================================================
+paths:
+  # =========================================================================
+  # Health
+  # =========================================================================
+  /api/health:
+    get:
+      tags: [Health]
+      summary: Service health check
+      description: Returns service status, version, uptime, and provider availability. No auth required.
+      security: []
+      responses:
+        "200":
+          description: Service healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /api/health/ready:
+    get:
+      tags: [Health]
+      summary: Readiness probe
+      description: Returns 200 if the service is ready to accept requests (DB connected). Used by Fly.io health checks.
+      security: []
+      responses:
+        "200":
+          description: Ready
+        "503":
+          description: Not ready (DB unreachable)
+
+  /api/health/detailed:
+    get:
+      tags: [Health]
+      summary: Detailed health with component status
+      description: Comprehensive check including DB, cache, proxy, and model registry status.
+      security: []
+      responses:
+        "200":
+          description: Detailed health info
+
+  /api/auth/mode:
+    get:
+      tags: [Health]
+      summary: Authentication mode
+      description: Returns the current auth mode (api_key, oauth, none). Used by frontend to show appropriate login UI.
+      security: []
+      responses:
+        "200":
+          description: Auth mode info
+
+  /api/system/stats:
+    get:
+      tags: [Health]
+      summary: System resource statistics
+      description: CPU, memory, and platform info for the monitoring dashboard.
+      responses:
+        "200":
+          description: System stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemStats"
+
+  /api/system/metrics:
+    get:
+      tags: [Health]
+      summary: System metrics (CPU, RAM, network)
+      description: Requires API key auth (x-api-key header).
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: System metrics
+
+  /api/system/audit:
+    get:
+      tags: [Health]
+      summary: Audit log entries
+      description: Requires API key auth. Returns recent audit trail entries.
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Audit entries
+
+  /api/metrics:
+    get:
+      tags: [Health]
+      summary: Prometheus metrics
+      description: Prometheus-format metrics endpoint for Grafana scraping. No auth required.
+      security: []
+      responses:
+        "200":
+          description: Prometheus text format
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /api/vitals:
+    post:
+      tags: [Health]
+      summary: Collect Web Vitals
+      description: Receives Core Web Vitals beacon data from the frontend (LCP, FID, CLS, etc.). No auth required.
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Vitals recorded
+
+  # =========================================================================
+  # Auth (Anthropic OAuth PKCE)
+  # =========================================================================
+  /api/auth/status:
+    get:
+      tags: [Auth]
+      summary: Anthropic OAuth status
+      description: Returns current OAuth session state (idle, waiting_code, authenticated).
+      security: []
+      responses:
+        "200":
+          description: Auth status
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Start Anthropic PKCE login flow
+      description: Initiates the Anthropic OAuth PKCE flow. Returns authorization URL for the user to visit.
+      security: []
+      responses:
+        "200":
+          description: Authorization URL
+
+  /api/auth/callback:
+    post:
+      tags: [Auth]
+      summary: Anthropic PKCE callback
+      description: Exchanges the authorization code for access+refresh tokens. Stores encrypted tokens in DB.
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+                state:
+                  type: string
+      responses:
+        "200":
+          description: Tokens exchanged successfully
+
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout (clear Anthropic tokens)
+      security: []
+      responses:
+        "200":
+          description: Logged out
+
+  # =========================================================================
+  # Auth — Google OAuth (secondary)
+  # =========================================================================
+  /api/auth/google/status:
+    get:
+      tags: [Auth]
+      summary: Google OAuth status
+      security: []
+      responses:
+        "200":
+          description: Google auth status (method, email)
+
+  /api/auth/google/login:
+    post:
+      tags: [Auth]
+      summary: Start Google OAuth PKCE login
+      security: []
+      responses:
+        "200":
+          description: Authorization URL
+
+  /api/auth/google/redirect:
+    get:
+      tags: [Auth]
+      summary: Google OAuth redirect callback
+      description: Browser redirects here after Google consent. Exchanges code for tokens.
+      security: []
+      responses:
+        "302":
+          description: Redirect to frontend after token exchange
+
+  /api/auth/google/logout:
+    post:
+      tags: [Auth]
+      summary: Clear Google OAuth tokens
+      security: []
+      responses:
+        "200":
+          description: Logged out
+
+  /api/auth/google/apikey:
+    post:
+      tags: [Auth]
+      summary: Save Google/Gemini API key
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [api_key]
+              properties:
+                api_key:
+                  type: string
+      responses:
+        "200":
+          description: API key saved
+    delete:
+      tags: [Auth]
+      summary: Delete Google/Gemini API key
+      security: []
+      responses:
+        "200":
+          description: API key deleted
+
+  # =========================================================================
+  # Auth — GitHub OAuth
+  # =========================================================================
+  /api/auth/github/status:
+    get:
+      tags: [Auth]
+      summary: GitHub OAuth status
+      security: []
+      responses:
+        "200":
+          description: GitHub auth status
+
+  /api/auth/github/login:
+    post:
+      tags: [Auth]
+      summary: Start GitHub OAuth login
+      security: []
+      responses:
+        "200":
+          description: Authorization URL
+
+  /api/auth/github/callback:
+    post:
+      tags: [Auth]
+      summary: GitHub OAuth callback
+      security: []
+      responses:
+        "200":
+          description: Token exchanged
+
+  /api/auth/github/logout:
+    post:
+      tags: [Auth]
+      summary: Clear GitHub OAuth tokens
+      security: []
+      responses:
+        "200":
+          description: Logged out
+
+  # =========================================================================
+  # Auth — Vercel OAuth
+  # =========================================================================
+  /api/auth/vercel/status:
+    get:
+      tags: [Auth]
+      summary: Vercel OAuth status
+      security: []
+      responses:
+        "200":
+          description: Vercel auth status
+
+  /api/auth/vercel/login:
+    post:
+      tags: [Auth]
+      summary: Start Vercel OAuth login
+      security: []
+      responses:
+        "200":
+          description: Authorization URL
+
+  /api/auth/vercel/callback:
+    post:
+      tags: [Auth]
+      summary: Vercel OAuth callback
+      security: []
+      responses:
+        "200":
+          description: Token exchanged
+
+  /api/auth/vercel/logout:
+    post:
+      tags: [Auth]
+      summary: Clear Vercel OAuth tokens
+      security: []
+      responses:
+        "200":
+          description: Logged out
+
+  # =========================================================================
+  # Chat — Claude Streaming & Non-Streaming
+  # =========================================================================
+  /api/claude/chat:
+    post:
+      tags: [Chat]
+      summary: Non-streaming chat completion
+      description: |
+        Sends messages to Claude and returns a single JSON response. Supports tool use
+        when `tools_enabled` is true. Auth + rate limiting applied.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: Chat completion response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatResponse"
+        "401":
+          description: No API key configured
+        "502":
+          description: AI provider request failed
+
+  /api/claude/chat/stream:
+    post:
+      tags: [Chat]
+      summary: Streaming chat completion (NDJSON)
+      description: |
+        Streams the Claude response as newline-delimited JSON events.
+        Supports agentic tool-use loops with automatic tool execution.
+        Rate limited to 2 req/s burst 30. Auth required.
+
+        Response is `text/event-stream` with NDJSON lines.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: NDJSON streaming response
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Newline-delimited JSON events
+
+  /api/claude/models:
+    get:
+      tags: [Chat]
+      summary: List resolved Claude models per tier
+      description: Returns dynamically resolved models for Commander (Opus), Coordinator (Sonnet), Executor (Haiku), and Flash tiers.
+      responses:
+        "200":
+          description: Claude models list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ClaudeModelInfo"
+
+  /api/prefetch/hints:
+    post:
+      tags: [Chat]
+      summary: Predictive UI prefetch hints
+      description: |
+        For NDJSON streaming clients. Analyzes prompt text for keywords
+        and returns views the user might navigate to next.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                prompt:
+                  type: string
+      responses:
+        "200":
+          description: View hints
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  views:
+                    type: array
+                    items:
+                      type: string
+
+  # =========================================================================
+  # WebSocket Chat
+  # =========================================================================
+  /ws/chat:
+    get:
+      tags: [Chat]
+      summary: WebSocket streaming chat
+      description: |
+        WebSocket endpoint for real-time chat with rich protocol.
+        Client sends `WsClientMessage` (execute, cancel, ping).
+        Server sends `WsServerMessage` (start, token, complete, tool_call,
+        tool_result, iteration, error, pong, heartbeat, fallback, view_hint).
+        Rate limited to 6 connections/s burst 10.
+      responses:
+        "101":
+          description: WebSocket upgrade
+
+  # =========================================================================
+  # Sessions
+  # =========================================================================
+  /api/sessions:
+    get:
+      tags: [Sessions]
+      summary: List all sessions
+      description: Returns lightweight session summaries sorted by updated_at DESC.
+      responses:
+        "200":
+          description: Session list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SessionSummary"
+    post:
+      tags: [Sessions]
+      summary: Create a new session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSessionRequest"
+      responses:
+        "201":
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionSummary"
+
+  /api/sessions/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Sessions]
+      summary: Get session with paginated messages
+      description: |
+        Returns session details with messages and tool interactions.
+        Supports pagination via `limit` and `offset` query params.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 200
+            maximum: 500
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Session with messages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "404":
+          description: Session not found
+    patch:
+      tags: [Sessions]
+      summary: Update session (rename)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSessionRequest"
+      responses:
+        "200":
+          description: Session updated
+    delete:
+      tags: [Sessions]
+      summary: Delete session and all messages
+      responses:
+        "200":
+          description: Session deleted
+        "404":
+          description: Session not found
+
+  /api/sessions/{id}/messages:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Sessions]
+      summary: Get session messages
+      responses:
+        "200":
+          description: Messages list
+    post:
+      tags: [Sessions]
+      summary: Add message to session
+      description: Adds a message with optional tool interactions. Max content length 100,000 chars.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddMessageRequest"
+      responses:
+        "201":
+          description: Message added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HistoryEntry"
+        "400":
+          description: Content too long or invalid UUID
+        "404":
+          description: Session not found
+
+  /api/sessions/{id}/generate-title:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [Sessions]
+      summary: AI-generate a session title
+      description: Uses the first messages to generate a concise title via LLM.
+      responses:
+        "200":
+          description: Title generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  title:
+                    type: string
+
+  /api/sessions/{id}/working-directory:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      tags: [Sessions]
+      summary: Update session working directory
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                working_directory:
+                  type: string
+      responses:
+        "200":
+          description: Working directory updated
+
+  /api/sessions/{id}/unlock:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [Sessions]
+      summary: Unlock session agent lock
+      description: Releases the agent execution lock on a session (useful for stuck sessions).
+      responses:
+        "200":
+          description: Session unlocked
+
+  /api/sessions/search:
+    get:
+      tags: [Sessions, Tags]
+      summary: Full-text search across sessions
+      description: Searches message content using PostgreSQL tsvector. Supports tag filtering.
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Full-text search query
+        - name: tags
+          in: query
+          schema:
+            type: string
+          description: Comma-separated tag filter
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SearchResult"
+                  total:
+                    type: integer
+                  query:
+                    type: string
+                    nullable: true
+                  tags:
+                    type: array
+                    items:
+                      type: string
+
+  # =========================================================================
+  # Tags
+  # =========================================================================
+  /api/sessions/{id}/tags:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Tags]
+      summary: List tags for a session
+      responses:
+        "200":
+          description: Session tags
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id:
+                    type: string
+                  tags:
+                    type: array
+                    items:
+                      type: string
+    post:
+      tags: [Tags]
+      summary: Add tags to a session
+      description: Tags are lowercased and deduplicated. Max 50 chars per tag.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddTagsRequest"
+      responses:
+        "200":
+          description: Tags added
+
+  /api/sessions/{id}/tags/{tag}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: tag
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [Tags]
+      summary: Remove a tag from a session
+      responses:
+        "200":
+          description: Tag removed
+        "404":
+          description: Tag not found
+
+  /api/tags:
+    get:
+      tags: [Tags]
+      summary: List all unique tags with counts
+      description: Returns all tags across all sessions, sorted by usage count.
+      responses:
+        "200":
+          description: Tag list with counts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tags:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        tag:
+                          type: string
+                        count:
+                          type: integer
+
+  # =========================================================================
+  # Settings
+  # =========================================================================
+  /api/settings:
+    get:
+      tags: [Settings]
+      summary: Get application settings
+      responses:
+        "200":
+          description: Current settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppSettings"
+    post:
+      tags: [Settings]
+      summary: Update application settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppSettings"
+      responses:
+        "200":
+          description: Settings updated
+    patch:
+      tags: [Settings]
+      summary: Partial update application settings
+      description: Shared session_routes provides PATCH for partial updates.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Settings patched
+
+  /api/settings/api-key:
+    post:
+      tags: [Settings, Auth]
+      summary: Save an API key at runtime
+      description: Hot-loads an API key (e.g., ANTHROPIC_API_KEY) without restart.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiKeyRequest"
+      responses:
+        "200":
+          description: Key saved
+
+  /api/settings/reset:
+    post:
+      tags: [Settings]
+      summary: Reset settings to defaults
+      responses:
+        "200":
+          description: Settings reset
+
+  # =========================================================================
+  # Agents
+  # =========================================================================
+  /api/agents:
+    get:
+      tags: [Agents]
+      summary: List all Witcher agents
+      description: Returns the in-memory agent cache (populated from DB at startup).
+      responses:
+        "200":
+          description: Agent list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WitcherAgent"
+    post:
+      tags: [Agents]
+      summary: Create a new agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAgentRequest"
+      responses:
+        "201":
+          description: Agent created
+
+  /api/agents/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Agents]
+      summary: Get agent by ID
+      responses:
+        "200":
+          description: Agent details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WitcherAgent"
+        "404":
+          description: Agent not found
+    put:
+      tags: [Agents]
+      summary: Update an agent (partial)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAgentRequest"
+      responses:
+        "200":
+          description: Agent updated
+    delete:
+      tags: [Agents]
+      summary: Delete an agent
+      responses:
+        "200":
+          description: Agent deleted
+
+  /api/agents/refresh:
+    post:
+      tags: [Agents]
+      summary: Refresh agents from DB
+      description: Reloads the in-memory agent cache from the database.
+      responses:
+        "200":
+          description: Agents refreshed
+
+  /api/agents/delegations:
+    get:
+      tags: [Agents]
+      summary: List recent delegations
+      description: Returns recent agent delegation history.
+      responses:
+        "200":
+          description: Delegation list
+
+  /api/agents/delegations/stream:
+    get:
+      tags: [Agents]
+      summary: SSE stream of delegation events
+      description: Server-Sent Events stream for real-time delegation monitoring.
+      responses:
+        "200":
+          description: SSE event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  # =========================================================================
+  # Model Registry
+  # =========================================================================
+  /api/models:
+    get:
+      tags: [Models]
+      summary: List all cached models
+      description: |
+        Returns all models from the dynamic model registry (Anthropic + Google).
+        Includes resolved best model per tier (commander/coordinator/executor/flash).
+      responses:
+        "200":
+          description: Model list with resolved tiers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  models:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ModelInfo"
+                  resolved:
+                    $ref: "#/components/schemas/ResolvedModels"
+
+  /api/models/refresh:
+    post:
+      tags: [Models]
+      summary: Force refresh model cache
+      description: Re-fetches models from Anthropic and Google APIs. Cache TTL is 1 hour.
+      responses:
+        "200":
+          description: Models refreshed
+
+  /api/models/pin:
+    post:
+      tags: [Models]
+      summary: Pin a model for a use case
+      description: Override the auto-selected model for a tier (commander/coordinator/executor).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PinModelRequest"
+      responses:
+        "200":
+          description: Model pinned
+
+  /api/models/pin/{use_case}:
+    parameters:
+      - name: use_case
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [Models]
+      summary: Unpin a model for a use case
+      description: Revert to auto-selection for the given tier.
+      responses:
+        "200":
+          description: Model unpinned
+
+  /api/models/pins:
+    get:
+      tags: [Models]
+      summary: List all pinned models
+      responses:
+        "200":
+          description: Pin list
+
+  # =========================================================================
+  # Analytics
+  # =========================================================================
+  /api/analytics/tokens:
+    get:
+      tags: [Analytics]
+      summary: Daily token usage breakdown
+      description: Aggregated token usage by model and day for the performance dashboard.
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            default: 7
+      responses:
+        "200":
+          description: Token usage data
+
+  /api/analytics/latency:
+    get:
+      tags: [Analytics]
+      summary: Daily latency percentiles
+      description: P50, P95, and average latency by tier and day.
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            default: 7
+      responses:
+        "200":
+          description: Latency data
+
+  /api/analytics/success-rate:
+    get:
+      tags: [Analytics]
+      summary: Model success rates
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            default: 7
+      responses:
+        "200":
+          description: Success rate data
+
+  /api/analytics/top-tools:
+    get:
+      tags: [Analytics]
+      summary: Top tool usage statistics
+      description: Most-used agent tools with error counts and average duration.
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            default: 7
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+      responses:
+        "200":
+          description: Top tools data
+
+  /api/analytics/cost:
+    get:
+      tags: [Analytics]
+      summary: Cost breakdown by model
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            default: 7
+      responses:
+        "200":
+          description: Cost breakdown data
+
+  # =========================================================================
+  # Files
+  # =========================================================================
+  /api/files/list:
+    post:
+      tags: [Files]
+      summary: List directory contents
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                directory:
+                  type: string
+                show_hidden:
+                  type: boolean
+                  default: false
+      responses:
+        "200":
+          description: Directory listing
+
+  /api/files/browse:
+    post:
+      tags: [Files]
+      summary: Native folder browser
+      description: Opens a native folder selection dialog and returns the selected path.
+      responses:
+        "200":
+          description: Selected path
+
+  # =========================================================================
+  # Logs
+  # =========================================================================
+  /api/logs/backend:
+    get:
+      tags: [Logs]
+      summary: Get backend log ring buffer
+      description: Returns the in-memory ring buffer of recent tracing events (capacity 1000).
+      responses:
+        "200":
+          description: Log entries
+    delete:
+      tags: [Logs]
+      summary: Clear backend log buffer
+      responses:
+        "200":
+          description: Logs cleared
+
+  # =========================================================================
+  # Prompt History
+  # =========================================================================
+  /api/prompt-history:
+    get:
+      tags: [Sessions]
+      summary: List prompt history
+      description: Returns saved prompts for bash-like Arrow Up/Down recall (ASC, limit 500).
+      responses:
+        "200":
+          description: Prompt history list
+    post:
+      tags: [Sessions]
+      summary: Add prompt to history
+      description: Consecutive dedup, max 200 entries with auto-cleanup.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddPromptRequest"
+      responses:
+        "201":
+          description: Prompt added
+    delete:
+      tags: [Sessions]
+      summary: Clear prompt history
+      responses:
+        "200":
+          description: History cleared
+
+  # =========================================================================
+  # History & Memory (shared session_routes)
+  # =========================================================================
+  /api/history:
+    get:
+      tags: [Sessions]
+      summary: Get conversation history
+      responses:
+        "200":
+          description: History entries
+    post:
+      tags: [Sessions]
+      summary: Add message to history
+      responses:
+        "201":
+          description: Message added
+    delete:
+      tags: [Sessions]
+      summary: Clear conversation history
+      responses:
+        "200":
+          description: History cleared
+
+  /api/history/search:
+    get:
+      tags: [Sessions]
+      summary: Search conversation history
+      responses:
+        "200":
+          description: Search results
+
+  /api/memory/memories:
+    get:
+      tags: [Memory]
+      summary: List agent memories
+      responses:
+        "200":
+          description: Memory entries
+    post:
+      tags: [Memory]
+      summary: Add a memory
+      responses:
+        "201":
+          description: Memory added
+    delete:
+      tags: [Memory]
+      summary: Clear all memories
+      responses:
+        "200":
+          description: Memories cleared
+
+  /api/memory/graph:
+    get:
+      tags: [Memory]
+      summary: Get knowledge graph
+      description: Returns nodes and edges of the session knowledge graph.
+      responses:
+        "200":
+          description: Knowledge graph data
+
+  /api/memory/graph/nodes:
+    post:
+      tags: [Memory]
+      summary: Add knowledge graph node
+      responses:
+        "201":
+          description: Node added
+
+  /api/memory/graph/edges:
+    post:
+      tags: [Memory]
+      summary: Add knowledge graph edge
+      responses:
+        "201":
+          description: Edge added
+
+  /api/ratings:
+    post:
+      tags: [Sessions]
+      summary: Rate a message
+      description: Submit a user rating for a specific message.
+      responses:
+        "200":
+          description: Rating saved
+
+  # =========================================================================
+  # OCR
+  # =========================================================================
+  /api/ocr:
+    post:
+      tags: [OCR]
+      summary: Extract text from image/PDF
+      description: Uses Claude Vision (primary) or Gemini Vision (fallback) for OCR.
+      responses:
+        "200":
+          description: Extracted text
+
+  /api/ocr/stream:
+    post:
+      tags: [OCR]
+      summary: Stream OCR results (SSE)
+      description: Streams OCR results page by page for large documents.
+      responses:
+        "200":
+          description: SSE OCR events
+
+  /api/ocr/batch/stream:
+    post:
+      tags: [OCR]
+      summary: Batch OCR with streaming
+      description: Process multiple images/pages in parallel with streaming results.
+      responses:
+        "200":
+          description: SSE batch OCR events
+
+  /api/ocr/history:
+    get:
+      tags: [OCR]
+      summary: List OCR history
+      responses:
+        "200":
+          description: OCR history entries
+
+  /api/ocr/history/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [OCR]
+      summary: Get OCR history item
+      responses:
+        "200":
+          description: OCR item details
+    delete:
+      tags: [OCR]
+      summary: Delete OCR history item
+      responses:
+        "200":
+          description: Item deleted
+
+  # =========================================================================
+  # Service Tokens
+  # =========================================================================
+  /api/tokens:
+    get:
+      tags: [Auth]
+      summary: List stored service tokens
+      description: Returns a list of service names with masked token values.
+      responses:
+        "200":
+          description: Token list
+    post:
+      tags: [Auth]
+      summary: Store a service token (encrypted)
+      description: Stores a PAT or token with AES-256-GCM encryption.
+      responses:
+        "201":
+          description: Token stored
+
+  /api/tokens/{service}:
+    parameters:
+      - name: service
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [Auth]
+      summary: Delete a service token
+      responses:
+        "200":
+          description: Token deleted
+
+  # =========================================================================
+  # MCP (Model Context Protocol)
+  # =========================================================================
+  /mcp:
+    post:
+      tags: [MCP]
+      summary: MCP server endpoint
+      description: JSON-RPC 2.0 endpoint for MCP protocol (tool discovery, tool execution).
+      responses:
+        "200":
+          description: JSON-RPC response
+
+  /api/mcp/servers:
+    get:
+      tags: [MCP]
+      summary: List configured MCP servers
+      responses:
+        "200":
+          description: MCP server list
+    post:
+      tags: [MCP]
+      summary: Register a new MCP server
+      responses:
+        "201":
+          description: Server registered
+
+  /api/mcp/servers/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      tags: [MCP]
+      summary: Update MCP server configuration
+      responses:
+        "200":
+          description: Server updated
+    delete:
+      tags: [MCP]
+      summary: Remove MCP server
+      responses:
+        "200":
+          description: Server removed
+
+  /api/mcp/servers/{id}/connect:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [MCP]
+      summary: Connect to MCP server
+      description: Establish connection and discover available tools.
+      responses:
+        "200":
+          description: Connected
+
+  /api/mcp/servers/{id}/disconnect:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [MCP]
+      summary: Disconnect from MCP server
+      responses:
+        "200":
+          description: Disconnected
+
+  /api/mcp/servers/{id}/tools:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [MCP]
+      summary: List tools from a specific MCP server
+      responses:
+        "200":
+          description: Tool list
+
+  /api/mcp/tools:
+    get:
+      tags: [MCP]
+      summary: List all available MCP tools
+      description: Aggregated list of tools from all connected MCP servers.
+      responses:
+        "200":
+          description: All tools
+
+  /api/mcp/agents/{id}/permissions:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [MCP]
+      summary: Get agent MCP permissions
+      responses:
+        "200":
+          description: Permission list
+    put:
+      tags: [MCP]
+      summary: Set agent MCP permissions
+      responses:
+        "200":
+          description: Permissions updated
+
+  # =========================================================================
+  # Browser Proxy
+  # =========================================================================
+  /api/browser-proxy/status:
+    get:
+      tags: [BrowserProxy]
+      summary: Browser proxy status
+      description: Returns proxy connectivity, workers, pool size, backoff state. No auth.
+      security: []
+      responses:
+        "200":
+          description: Proxy status
+
+  /api/browser-proxy/history:
+    get:
+      tags: [BrowserProxy]
+      summary: Browser proxy health history
+      description: Ring buffer of proxy health events (50 entries). No auth.
+      security: []
+      responses:
+        "200":
+          description: Health history
+
+  /api/browser-proxy/login:
+    post:
+      tags: [BrowserProxy]
+      summary: Initiate browser proxy login
+      description: Starts browser login flow for Google services.
+      security: []
+      responses:
+        "200":
+          description: Login initiated
+
+  /api/browser-proxy/login/status:
+    get:
+      tags: [BrowserProxy]
+      summary: Browser proxy login status
+      security: []
+      responses:
+        "200":
+          description: Login status
+
+  /api/browser-proxy/reinit:
+    post:
+      tags: [BrowserProxy]
+      summary: Reinitialize browser proxy
+      description: Force restart of the browser proxy process.
+      security: []
+      responses:
+        "200":
+          description: Reinitialized
+
+  /api/browser-proxy/logout:
+    delete:
+      tags: [BrowserProxy]
+      summary: Browser proxy logout
+      security: []
+      responses:
+        "200":
+          description: Logged out
+
+  # =========================================================================
+  # AI Gateway (Skarbiec Krasnali)
+  # =========================================================================
+  /api/ai/{provider}/chat:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [anthropic, google, openai, xai, deepseek, ollama]
+    post:
+      tags: [AIGateway]
+      summary: Unified chat completion (any provider)
+      description: |
+        Proxies a chat request to the specified AI provider. Credentials are
+        resolved from the Jaskier Vault (Bouncer pattern) -- the raw token
+        never enters the backend process memory.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GatewayChatRequest"
+      responses:
+        "200":
+          description: Chat response from provider
+        "400":
+          description: Unknown provider
+        "401":
+          description: No credentials for provider
+        "502":
+          description: Provider request failed
+
+  /api/ai/{provider}/stream:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [anthropic, google, openai, xai, deepseek, ollama]
+    post:
+      tags: [AIGateway]
+      summary: Streaming chat (SSE) via any provider
+      description: SSE streaming proxy. All providers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GatewayChatRequest"
+      responses:
+        "200":
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /api/ai/providers:
+    get:
+      tags: [AIGateway]
+      summary: List all AI providers
+      description: Returns provider list with connection status, plan info, and model tiers.
+      responses:
+        "200":
+          description: Provider list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GatewayProviderInfo"
+
+  /api/ai/providers/{provider}/status:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [AIGateway]
+      summary: Single provider status
+      responses:
+        "200":
+          description: Provider status
+
+  /api/ai/providers/{provider}/connect:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [AIGateway]
+      summary: Initiate provider OAuth/login
+      responses:
+        "200":
+          description: Connection initiated
+
+  /api/ai/providers/{provider}/callback:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [AIGateway]
+      summary: OAuth callback for provider
+      responses:
+        "200":
+          description: Callback processed
+
+  /api/ai/providers/{provider}/disconnect:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [AIGateway]
+      summary: Disconnect provider (revoke + delete)
+      responses:
+        "200":
+          description: Provider disconnected
+
+  /api/ai/providers/{provider}/refresh:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [AIGateway]
+      summary: Force token refresh for provider
+      responses:
+        "200":
+          description: Token refreshed
+
+  /api/ai/providers/{provider}/test:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [AIGateway]
+      summary: Test provider connection
+      description: Sends a test request and returns latency + success status.
+      responses:
+        "200":
+          description: Test result
+
+  # =========================================================================
+  # Vault Proxy
+  # =========================================================================
+  /api/vault/health:
+    get:
+      tags: [Vault]
+      summary: Vault health check
+      description: Forwards health check to the Jaskier Vault MCP Server. No auth.
+      security: []
+      responses:
+        "200":
+          description: Vault health status
+
+  /api/vault/audit:
+    get:
+      tags: [Vault]
+      summary: Vault audit log
+      description: Forwards audit log request to Vault. No auth.
+      security: []
+      responses:
+        "200":
+          description: Audit entries
+
+  /api/vault/panic:
+    post:
+      tags: [Vault]
+      summary: Emergency vault destruction
+      description: |
+        IRREVERSIBLE. Forwards panic command to Vault. Destroys all stored secrets.
+        Protected by auth middleware.
+      responses:
+        "200":
+          description: Panic executed
+
+  /api/vault/rotate:
+    post:
+      tags: [Vault]
+      summary: Rotate vault credentials
+      description: Triggers credential rotation in the Vault. Protected by auth.
+      responses:
+        "200":
+          description: Rotation executed
+
+  # =========================================================================
+  # Swarm IPC
+  # =========================================================================
+  /api/swarm/discover:
+    get:
+      tags: [SwarmIPC]
+      summary: Discover swarm peers
+      description: |
+        Probes all known Hydra instances (ports 8080-8085) via /api/health.
+        Returns online/offline status for each peer.
+      responses:
+        "200":
+          description: Peer discovery results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  peers:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SwarmPeer"
+                  online:
+                    type: integer
+                  total:
+                    type: integer
+
+  /api/swarm/peers:
+    get:
+      tags: [SwarmIPC]
+      summary: List cached peers (no probe)
+      description: Returns the last-known peer list without network probing.
+      responses:
+        "200":
+          description: Peer list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SwarmPeer"
+
+  /api/swarm/delegate:
+    post:
+      tags: [SwarmIPC]
+      summary: Delegate a task to the swarm
+      description: |
+        Creates a swarm task and executes it across target peers.
+        Returns 202 immediately; task runs in background.
+        Patterns: parallel, sequential, review, hierarchical, fan_out.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DelegateRequest"
+      responses:
+        "202":
+          description: Task accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id:
+                    type: string
+                  status:
+                    type: string
+                    example: accepted
+
+  /api/swarm/tasks:
+    get:
+      tags: [SwarmIPC]
+      summary: List recent swarm tasks
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Task summaries
+
+  /api/swarm/tasks/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [SwarmIPC]
+      summary: Get swarm task details
+      description: Full task details including results from all target peers.
+      responses:
+        "200":
+          description: Task details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwarmTask"
+        "404":
+          description: Task not found
+
+  /api/swarm/events:
+    get:
+      tags: [SwarmIPC]
+      summary: SSE stream of swarm events
+      description: Real-time Server-Sent Events for peer discovery, task progress, and completion.
+      responses:
+        "200":
+          description: SSE event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /api/swarm/architecture:
+    get:
+      tags: [SwarmIPC]
+      summary: Get swarm architecture graph
+      description: Returns the visual @xyflow/react graph (nodes and edges).
+      responses:
+        "200":
+          description: Graph data
+    post:
+      tags: [SwarmIPC]
+      summary: Update swarm architecture graph
+      description: Save the visual graph layout.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nodes:
+                  type: array
+                  items:
+                    type: object
+                edges:
+                  type: array
+                  items:
+                    type: object
+      responses:
+        "200":
+          description: Graph saved
+
+  # =========================================================================
+  # CRDT Collaboration
+  # =========================================================================
+  /ws/sync/{app}/{doc_key}:
+    parameters:
+      - name: app
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Application namespace (e.g. "claudehydra")
+      - name: doc_key
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Document key (e.g. session ID)
+    get:
+      tags: [Collaboration]
+      summary: WebSocket CRDT document sync
+      description: |
+        Yrs (Rust Yjs port) WebSocket sync for real-time collaborative editing.
+        Protocol: FullState -> bidirectional Updates + AwarenessUpdate messages.
+      parameters:
+        - name: user_name
+          in: query
+          schema:
+            type: string
+            default: Anonymous
+        - name: user_color
+          in: query
+          schema:
+            type: string
+            description: Hex color (e.g. "#ff0000")
+        - name: is_agent
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: client_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "101":
+          description: WebSocket upgrade
+
+  /api/collab/stats:
+    get:
+      tags: [Collaboration]
+      summary: Collaboration statistics
+      description: Active rooms, total peers, document sizes, GC status.
+      responses:
+        "200":
+          description: Collaboration stats
+
+  /api/collab/rooms:
+    get:
+      tags: [Collaboration]
+      summary: List active rooms
+      responses:
+        "200":
+          description: Room list
+
+  /api/collab/events:
+    get:
+      tags: [Collaboration]
+      summary: SSE collaboration events
+      description: Real-time events -- peer_joined, peer_left, document_saved, gc_completed.
+      responses:
+        "200":
+          description: SSE event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  # =========================================================================
+  # Semantic Cache
+  # =========================================================================
+  /api/semantic-cache/stats:
+    get:
+      tags: [SemanticCache]
+      summary: Cache statistics
+      description: |
+        Hit rate, cost saved, latency, total queries, exact/partial/miss distribution.
+        Also returns Qdrant collection info.
+      responses:
+        "200":
+          description: Cache stats
+
+  /api/semantic-cache/health:
+    get:
+      tags: [SemanticCache]
+      summary: Cache health check
+      description: Checks Qdrant (port 6333) and Gemini Embedding API connectivity.
+      responses:
+        "200":
+          description: Health status
+
+  /api/semantic-cache/config:
+    get:
+      tags: [SemanticCache]
+      summary: Get cache configuration
+      description: Current TTL, similarity thresholds, enabled flag.
+      responses:
+        "200":
+          description: Configuration
+    patch:
+      tags: [SemanticCache]
+      summary: Update cache configuration
+      description: Modify TTL, thresholds (exact 95%, partial 85%), enabled flag.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                ttl_hours:
+                  type: integer
+                exact_threshold:
+                  type: number
+                  format: double
+                partial_threshold:
+                  type: number
+                  format: double
+      responses:
+        "200":
+          description: Configuration updated
+
+  /api/semantic-cache/entries:
+    get:
+      tags: [SemanticCache]
+      summary: List cached entries
+      description: Paginated scroll through Qdrant entries.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: string
+            description: Scroll offset token
+      responses:
+        "200":
+          description: Cached entries
+
+  /api/semantic-cache/entries/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [SemanticCache]
+      summary: Delete a cached entry
+      responses:
+        "200":
+          description: Entry deleted
+
+  /api/semantic-cache/invalidate:
+    post:
+      tags: [SemanticCache]
+      summary: Invalidate cache
+      description: |
+        Invalidate by git commit hash (removes stale entries) or flush all.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                git_commit:
+                  type: string
+                  description: Invalidate entries from a specific commit
+                flush_all:
+                  type: boolean
+                  description: Flush the entire cache
+      responses:
+        "200":
+          description: Cache invalidated
+
+  /api/semantic-cache/compress:
+    post:
+      tags: [SemanticCache]
+      summary: AST-aware code compression
+      description: |
+        Tree-Sitter based code compression. Strips function/method bodies.
+        Supports Rust, TypeScript, JavaScript, Python, Go.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                language:
+                  type: string
+                  description: Auto-detected if omitted
+      responses:
+        "200":
+          description: Compressed code
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  compressed:
+                    type: string
+                  original_length:
+                    type: integer
+                  compressed_length:
+                    type: integer
+                  ratio:
+                    type: number
+
+  # =========================================================================
+  # Sandbox
+  # =========================================================================
+  /api/sandbox/health:
+    get:
+      tags: [Sandbox]
+      summary: Sandbox health check
+      description: Docker availability, active sessions, fallback mode status.
+      responses:
+        "200":
+          description: Sandbox health
+
+  /api/sandbox/create:
+    post:
+      tags: [Sandbox]
+      summary: Create sandbox session
+      description: |
+        Creates a persistent Docker container for code execution.
+        Languages: Node.js (node:22-alpine), Python (python:3.13-alpine),
+        Rust (rust:1.87-alpine), Bash (alpine:3.21).
+        Security: --cap-drop=ALL, --network=none, --pids-limit=64.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSandboxRequest"
+      responses:
+        "201":
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SandboxSession"
+
+  /api/sandbox/execute:
+    post:
+      tags: [Sandbox]
+      summary: Execute code in sandbox
+      description: |
+        If session_id is provided, reuses an existing container.
+        Otherwise, runs ephemeral execution (create -> execute -> destroy).
+        Max code size: 64KB. Max timeout: 120s.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecuteCodeRequest"
+      responses:
+        "200":
+          description: Execution result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SandboxExecution"
+        "400":
+          description: Code exceeds 64KB limit
+        "404":
+          description: Session not found
+        "409":
+          description: Session not ready
+
+  /api/sandbox/sessions:
+    get:
+      tags: [Sandbox]
+      summary: List active sandbox sessions
+      responses:
+        "200":
+          description: Session list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SandboxSession"
+
+  /api/sandbox/sessions/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Sandbox]
+      summary: Get sandbox session details
+      responses:
+        "200":
+          description: Session details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SandboxSession"
+        "404":
+          description: Session not found
+    delete:
+      tags: [Sandbox]
+      summary: Destroy sandbox session
+      description: Stops and removes the Docker container.
+      responses:
+        "200":
+          description: Session destroyed
+        "404":
+          description: Session not found
+
+  /api/sandbox/sessions/{id}/executions:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [Sandbox]
+      summary: Get execution history for a session
+      responses:
+        "200":
+          description: Execution list
+
+  /api/sandbox/executions:
+    get:
+      tags: [Sandbox]
+      summary: Recent executions (all sessions)
+      description: Returns the last 50 executions across all sessions.
+      responses:
+        "200":
+          description: Recent executions
+
+  # =========================================================================
+  # Memory Pruning
+  # =========================================================================
+  /api/memory/prune:
+    post:
+      tags: [MemoryPruning]
+      summary: Trigger manual pruning cycle
+      description: |
+        Starts a background pruning cycle (202 ACCEPTED).
+        Algorithm: Fetch entities from hipokamp MCP -> Gemini embeddings ->
+        cosine clustering -> self-reflection prompt -> prune actions -> audit log.
+      responses:
+        "202":
+          description: Pruning cycle started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: accepted
+                  cycle_id:
+                    type: string
+                  message:
+                    type: string
+
+  /api/memory/prune/stats:
+    get:
+      tags: [MemoryPruning]
+      summary: Pruning metrics
+      description: Lock-free atomic counters -- total cycles, deleted, merged, kept, tokens saved.
+      responses:
+        "200":
+          description: Pruning metrics
+
+  /api/memory/prune/history:
+    get:
+      tags: [MemoryPruning]
+      summary: Pruning cycle history
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        "200":
+          description: Cycle history
+
+  /api/memory/prune/details/{cycle_id}:
+    parameters:
+      - name: cycle_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [MemoryPruning]
+      summary: Detailed log entries for a pruning cycle
+      description: Per-entity actions (delete, merge, keep, archive) with similarity scores.
+      responses:
+        "200":
+          description: Cycle details
+
+  /api/memory/prune/config:
+    get:
+      tags: [MemoryPruning]
+      summary: Get pruning configuration
+      responses:
+        "200":
+          description: Pruning config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PruningConfig"
+    patch:
+      tags: [MemoryPruning]
+      summary: Update pruning configuration
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PruningConfig"
+      responses:
+        "200":
+          description: Config updated
+
+  # =========================================================================
+  # A2A (Agent-to-Agent Protocol v0.3)
+  # =========================================================================
+  /.well-known/agent-card.json:
+    get:
+      tags: [A2A]
+      summary: A2A Agent Card discovery
+      description: Returns the A2A v0.3 agent card for peer discovery. No auth.
+      security: []
+      responses:
+        "200":
+          description: Agent card JSON
+
+  /a2a/message/send:
+    post:
+      tags: [A2A]
+      summary: Send A2A message (non-streaming)
+      description: |
+        Receives a task from another Hydra agent and executes it.
+        Rate limited to 6 req/s burst 3.
+      responses:
+        "200":
+          description: Task result
+
+  /a2a/message/stream:
+    post:
+      tags: [A2A]
+      summary: Send A2A message (streaming SSE)
+      responses:
+        "200":
+          description: SSE task result stream
+
+  /a2a/tasks/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [A2A]
+      summary: Get A2A task status
+      responses:
+        "200":
+          description: Task status
+
+  /a2a/tasks/{id}/cancel:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [A2A]
+      summary: Cancel A2A task
+      responses:
+        "200":
+          description: Task cancelled
+
+  # =========================================================================
+  # Admin
+  # =========================================================================
+  /api/admin/rotate-key:
+    post:
+      tags: [Admin]
+      summary: Rotate the AUTH_SECRET key
+      description: Generates a new auth secret. Existing sessions will be invalidated.
+      responses:
+        "200":
+          description: Key rotated
+
+  /api/admin/rate-limits:
+    get:
+      tags: [Admin]
+      summary: List current rate limit configurations
+      responses:
+        "200":
+          description: Rate limit configs
+
+  /api/admin/rate-limits/{endpoint_group}:
+    parameters:
+      - name: endpoint_group
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      tags: [Admin]
+      summary: Update rate limit for an endpoint group
+      responses:
+        "200":
+          description: Rate limit updated
+
+  # =========================================================================
+  # Webhooks
+  # =========================================================================
+  /api/webhooks/grafana:
+    post:
+      tags: [Webhooks]
+      summary: Grafana alert webhook
+      description: |
+        Receives Grafana alerting webhooks and triggers self-healing workflow.
+        Returns 202 immediately; healing runs in background.
+      security: []
+      responses:
+        "202":
+          description: Self-healing triggered
+
+  # =========================================================================
+  # Swagger UI
+  # =========================================================================
+  /swagger-ui:
+    get:
+      tags: [Docs]
+      summary: Swagger UI
+      description: Interactive API documentation. Also available at /api-docs/openapi.json.
+      security: []
+      responses:
+        "200":
+          description: Swagger UI HTML
+
+# ===========================================================================
+# Tags
+# ===========================================================================
+tags:
+  - name: Health
+    description: Health checks, readiness probes, system stats, and metrics
+  - name: Auth
+    description: Authentication -- Anthropic OAuth PKCE, Google OAuth, GitHub, Vercel, service tokens
+  - name: Chat
+    description: Claude chat -- streaming (NDJSON), non-streaming, WebSocket, and model listing
+  - name: Sessions
+    description: Chat session CRUD, messages, prompt history, and history management
+  - name: Tags
+    description: Session tagging and full-text search across messages
+  - name: Settings
+    description: Application settings management
+  - name: Agents
+    description: Witcher agent configuration, CRUD, delegation monitoring
+  - name: Models
+    description: Dynamic model registry -- auto-discovery, pinning, tier resolution
+  - name: Analytics
+    description: Agent performance dashboard -- tokens, latency, success rates, tools, cost
+  - name: Files
+    description: File listing and native folder browser
+  - name: Logs
+    description: Backend log ring buffer
+  - name: OCR
+    description: OCR via Claude Vision (primary) / Gemini Vision (fallback)
+  - name: MCP
+    description: Model Context Protocol -- server management, tool discovery, permissions
+  - name: BrowserProxy
+    description: gemini-browser-proxy status, login, health history
+  - name: AIGateway
+    description: Unified AI Provider Gateway (Skarbiec Krasnali) -- all 6 providers via Vault
+  - name: Vault
+    description: Jaskier Vault proxy -- health, audit, panic, rotate
+  - name: SwarmIPC
+    description: Cross-agent communication -- peer discovery, task delegation, SSE events
+  - name: Collaboration
+    description: CRDT real-time collaboration -- Yrs WebSocket sync, rooms, cursors
+  - name: SemanticCache
+    description: Qdrant-backed semantic router with AST compression
+  - name: Sandbox
+    description: Docker-based isolated code execution for AI agents
+  - name: MemoryPruning
+    description: Knowledge Graph self-reflection and pruning
+  - name: Memory
+    description: Agent memory and knowledge graph management
+  - name: A2A
+    description: Agent-to-Agent Protocol v0.3 -- inter-Hydra task delegation
+  - name: Admin
+    description: Administrative operations -- key rotation, rate limit management
+  - name: Webhooks
+    description: External webhook receivers (Grafana alerts)
+  - name: Docs
+    description: API documentation (Swagger UI)
