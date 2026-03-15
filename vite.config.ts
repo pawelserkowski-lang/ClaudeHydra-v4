@@ -3,10 +3,31 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 import { visualizer } from 'rollup-plugin-visualizer';
+import type { Plugin } from 'vite';
 import { defineConfig, loadEnv } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 import topLevelAwait from 'vite-plugin-top-level-await';
 import wasm from 'vite-plugin-wasm';
+
+/**
+ * Stub plugin for virtual:pwa-register when vite-plugin-pwa is disabled.
+ * Returns a no-op registerSW function so the app builds and runs without PWA.
+ */
+function pwaRegisterStub(): Plugin {
+  return {
+    name: 'pwa-register-stub',
+    resolveId(id) {
+      if (id === 'virtual:pwa-register') return '\0virtual:pwa-register';
+      return null;
+    },
+    load(id) {
+      if (id === '\0virtual:pwa-register') {
+        return 'export function registerSW() { return () => {}; }';
+      }
+      return null;
+    },
+  };
+}
 
 export default defineConfig(({ mode }) => {
   // Load ALL env vars (empty prefix = no VITE_ filter)
@@ -17,7 +38,7 @@ export default defineConfig(({ mode }) => {
   // vite-plugin-pwa 0.21 is incompatible with Vite 6+ Environment API in monorepo
   // with mixed Vite versions (6.4 + 7.3). The secondary Rollup build picks up
   // vite@7.3's node:module chunks and fails with "createRequire" not exported.
-  // PWA plugin is only loaded in dev mode; production builds skip it entirely.
+  // PWA plugin is only loaded in dev mode; production builds use a stub.
   // Re-enable for production when vite-plugin-pwa releases Vite 6/7 compatible version.
   const isProd = mode === 'production';
 
@@ -31,9 +52,10 @@ export default defineConfig(({ mode }) => {
         },
       }),
       tailwindcss(),
-      // PWA: dev only (see comment above)
-      ...(!isProd
-        ? [
+      // PWA: use real plugin in dev, stub in production build
+      ...(isProd
+        ? [pwaRegisterStub()]
+        : [
             VitePWA({
               registerType: 'autoUpdate',
               workbox: {
@@ -56,8 +78,7 @@ export default defineConfig(({ mode }) => {
                 ],
               },
             }),
-          ]
-        : []),
+          ]),
       // Bundle size tracking: always generate stats.html on build, auto-open in analyze mode
       ...(isProd
         ? [(visualizer as any)({ open: false, filename: 'dist/stats.html', gzipSize: true, brotliSize: true })]
