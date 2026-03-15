@@ -79,10 +79,8 @@
       ]
     },
     "skarbiec": {
-      "command": "node",
-      "args": [
-        "C:\\Users\\BIURODOM\\Desktop\\JaskierWorkspace\\services\\JaskierVaultMCP\\index.js"
-      ]
+      "command": "C:\\Users\\BIURODOM\\Desktop\\JaskierWorkspace\\target\\release\\jaskier-vault-mcp.exe",
+      "args": []
     },
     "grafomanka": {
       "command": "uvx",
