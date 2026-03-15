@@ -72,7 +72,7 @@ async fn run_self_healing_workflow(state: AppState, alert: serde_json::Value) ->
     }
 
     let mutants_output = Command::new("cargo")
-        .args(&["mutants", "--uncommitted"])
+        .args(["mutants", "--uncommitted"])
         .output()
         .await;
         

@@ -585,11 +585,10 @@ impl ToolExecutor {
         // Append MCP tools from connected servers (shared McpTool has prefixed_name field)
         let mcp_tools = state.mcp_client.list_all_tools().await;
         for tool in mcp_tools {
-            if let Some(ref allowed) = allowed_servers {
-                if !allowed.contains(&tool.server_id) {
+            if let Some(ref allowed) = allowed_servers
+                && !allowed.contains(&tool.server_id) {
                     continue; // Skip tools from non-permitted servers
                 }
-            }
             defs.push(ToolDefinition {
                 name: tool.prefixed_name,
                 description: tool.description.unwrap_or_default(),

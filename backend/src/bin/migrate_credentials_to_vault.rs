@@ -546,13 +546,12 @@ async fn main() {
 /// Mask password in a connection string for safe logging.
 fn mask_connection_string(url: &str) -> String {
     // postgresql://user:password@host:port/db -> postgresql://user:***@host:port/db
-    if let Some(at_pos) = url.find('@') {
-        if let Some(colon_pos) = url[..at_pos].rfind(':') {
+    if let Some(at_pos) = url.find('@')
+        && let Some(colon_pos) = url[..at_pos].rfind(':') {
             let scheme_end = url.find("://").map(|p| p + 3).unwrap_or(0);
             if colon_pos > scheme_end {
                 return format!("{}***{}", &url[..colon_pos + 1], &url[at_pos..]);
             }
         }
-    }
     url.to_string()
 }

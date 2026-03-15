@@ -150,13 +150,85 @@ export default defineConfig(({ mode }) => {
         // 3. WASM pkg references (from vite-plugin-wasm commonjs transform)
         external: (id: string) => id.endsWith('.node') || id.startsWith('/wasm/') || id.includes('../pkg'),
         output: {
-          manualChunks: {
-            'vendor-motion': ['motion'],
-            'vendor-i18n': ['i18next', 'react-i18next'],
-            'vendor-query': ['@tanstack/react-query'],
-            'vendor-ui': ['sonner', 'tailwind-merge', 'clsx', 'dompurify'],
-            'vendor-zod': ['zod'],
-            'vendor-markdown': ['react-markdown', 'remark-gfm', 'rehype-highlight', 'highlight.js'],
+          manualChunks(id: string) {
+            // ── React core ──────────────────────────────────────────
+            if (
+              id.includes('/node_modules/react-dom/') ||
+              id.includes('/node_modules/react/') ||
+              id.includes('/node_modules/scheduler/')
+            ) {
+              return 'vendor-react';
+            }
+            // ── Zustand state management ────────────────────────────
+            if (id.includes('/node_modules/zustand/')) {
+              return 'vendor-zustand';
+            }
+            // ── TanStack React Query ────────────────────────────────
+            if (id.includes('/node_modules/@tanstack/react-query/') && !id.includes('devtools')) {
+              return 'vendor-query';
+            }
+            // ── TanStack DevTools (dev-only, eagerly loaded) ────────
+            if (id.includes('/node_modules/@tanstack/react-query-devtools/')) {
+              return 'vendor-devtools';
+            }
+            // ── TanStack Virtual ────────────────────────────────────
+            if (
+              id.includes('/node_modules/@tanstack/react-virtual/') ||
+              id.includes('/node_modules/@tanstack/virtual-core/')
+            ) {
+              return 'vendor-virtual';
+            }
+            // ── Motion / Framer Motion ──────────────────────────────
+            if (id.includes('/node_modules/motion/')) {
+              return 'vendor-motion';
+            }
+            // ── i18n ────────────────────────────────────────────────
+            if (id.includes('/node_modules/i18next') || id.includes('/node_modules/react-i18next/')) {
+              return 'vendor-i18n';
+            }
+            // ── Markdown rendering (heavy: highlight.js ~250kB) ─────
+            if (
+              id.includes('/node_modules/react-markdown/') ||
+              id.includes('/node_modules/remark-') ||
+              id.includes('/node_modules/rehype-') ||
+              id.includes('/node_modules/highlight.js/') ||
+              id.includes('/node_modules/lowlight/') ||
+              id.includes('/node_modules/hast-') ||
+              id.includes('/node_modules/mdast-') ||
+              id.includes('/node_modules/micromark') ||
+              id.includes('/node_modules/unified/') ||
+              id.includes('/node_modules/unist-')
+            ) {
+              return 'vendor-markdown';
+            }
+            // ── Zod schema validation ───────────────────────────────
+            if (id.includes('/node_modules/zod/')) {
+              return 'vendor-zod';
+            }
+            // ── Lucide icons (tree-shaken but still ~80kB) ──────────
+            if (id.includes('/node_modules/lucide-react/')) {
+              return 'vendor-lucide';
+            }
+            // ── OpenTelemetry + Zone.js (telemetry stack ~300kB) ────
+            if (id.includes('/node_modules/@opentelemetry/') || id.includes('/node_modules/zone.js/')) {
+              return 'vendor-otel';
+            }
+            // ── UI utilities (sonner, dompurify, etc.) ─────────────
+            if (id.includes('/node_modules/sonner/') || id.includes('/node_modules/dompurify/')) {
+              return 'vendor-ui';
+            }
+            // ── @jaskier/* workspace packages (shared app code) ─────
+            // These resolve through symlinks to ../packages/*
+            if (id.includes('/packages/core/') || id.includes('/packages/state/') || id.includes('/packages/i18n/')) {
+              return 'shared-core';
+            }
+            if (
+              id.includes('/packages/hydra-app/') ||
+              id.includes('/packages/chat-module/') ||
+              id.includes('/packages/ui/')
+            ) {
+              return 'shared-ui';
+            }
           },
         },
       },

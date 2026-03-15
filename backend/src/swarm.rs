@@ -22,6 +22,12 @@ pub struct SwarmState {
     pub event_tx: broadcast::Sender<SwarmEvent>,
 }
 
+impl Default for SwarmState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SwarmState {
     pub fn new() -> Self {
         let registry = SwarmRegistry::new("claudehydra");

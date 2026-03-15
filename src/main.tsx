@@ -1,11 +1,15 @@
 import { FeatureErrorFallback } from '@jaskier/hydra-app/components/molecules';
 import { ErrorBoundary } from '@jaskier/ui';
 import { QueryClientProvider, QueryErrorResetBoundary } from '@tanstack/react-query';
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { AnimatePresence, motion } from 'motion/react';
 import { lazy, StrictMode, Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Toaster } from 'sonner';
+
+const ReactQueryDevtools = lazy(() =>
+  import('@tanstack/react-query-devtools').then((m) => ({ default: m.ReactQueryDevtools })),
+);
+
 import { OfflineBanner } from '@/components/molecules/OfflineBanner';
 import { ViewSkeleton } from '@/components/molecules/ViewSkeleton';
 import { AppShell } from '@/components/organisms/AppShell';
@@ -15,10 +19,12 @@ import '@/i18n';
 import './styles/globals.css';
 // @ts-expect-error
 import { registerSW } from 'virtual:pwa-register';
-import { initTelemetry } from '@jaskier/core';
 
-initTelemetry({
-  serviceName: 'claudehydra-frontend',
+// Telemetry — loaded async to avoid blocking initial render (~300kB OTel + Zone.js)
+import('@jaskier/core').then(({ initTelemetry }) => {
+  initTelemetry({
+    serviceName: 'claudehydra-frontend',
+  });
 });
 
 // Register Service Worker for PWA
@@ -186,7 +192,9 @@ function App() {
       </QueryErrorResetBoundary>
       <OfflineBanner />
       <Toaster position="bottom-right" theme="dark" richColors />
-      <ReactQueryDevtools initialIsOpen={false} />
+      <Suspense fallback={null}>
+        <ReactQueryDevtools initialIsOpen={false} />
+      </Suspense>
     </QueryClientProvider>
   );
 }

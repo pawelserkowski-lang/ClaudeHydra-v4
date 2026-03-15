@@ -210,24 +210,22 @@ pub async fn update_agent(
     Json(req): Json<UpdateAgentRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     // Validate tier if provided
-    if let Some(ref tier) = req.tier {
-        if !["Commander", "Coordinator", "Executor"].contains(&tier.as_str()) {
+    if let Some(ref tier) = req.tier
+        && !["Commander", "Coordinator", "Executor"].contains(&tier.as_str()) {
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": "tier must be one of: Commander, Coordinator, Executor" })),
             ));
         }
-    }
 
     // Validate name if provided
-    if let Some(ref name) = req.name {
-        if name.trim().is_empty() {
+    if let Some(ref name) = req.name
+        && name.trim().is_empty() {
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": "name must not be empty" })),
             ));
         }
-    }
 
     // Use COALESCE pattern: only update fields that are provided (non-null)
     let row: Option<AgentConfigRow> = sqlx::query_as(

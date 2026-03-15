@@ -836,7 +836,7 @@ where
     let vault = state.vault_client();
     
     let mut last_error_response = None;
-    let mut last_latency = 0;
+    let mut last_latency;
 
     for (attempt, provider_enum) in fallback_chain.iter().enumerate() {
         let config = match gateway.providers.get(provider_enum) {

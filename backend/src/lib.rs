@@ -282,7 +282,7 @@ fn ch_ocr_routes() -> Router<AppState> {
 /// - `/api/logs/backend`   — shared log ring buffer handlers
 /// - `/api/tokens*`        — shared service token handlers
 /// - `/api/sessions*`      — shared `session_routes::<S>()` (list, CRUD, messages,
-///                           working-directory, generate-title, prompt-history)
+///   working-directory, generate-title, prompt-history)
 /// - `/mcp`                — shared MCP server endpoint
 /// - `/api/mcp/*`          — shared MCP config endpoints
 ///

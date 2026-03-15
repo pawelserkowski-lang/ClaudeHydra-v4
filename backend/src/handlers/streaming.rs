@@ -79,7 +79,7 @@ impl HasAnthropicStreamingState for AppState {
         }
     }
 
-    fn resolve_context(
+    async fn resolve_context(
         &self,
         _messages: &[Value],
         _model_override: Option<&str>,
@@ -87,20 +87,18 @@ impl HasAnthropicStreamingState for AppState {
         _temperature: Option<f64>,
         _max_tokens: Option<u32>,
         _tools_enabled: bool,
-    ) -> impl std::future::Future<Output = AnthropicChatContext> + Send {
+    ) -> AnthropicChatContext {
         // This is called internally by the shared handler. For CH, we resolve
         // context outside the trait (via resolve_chat_context) and pass it in.
         // This default impl is a fallback that should not be called directly.
-        async {
-            AnthropicChatContext {
-                model: "claude-sonnet-4-6".to_string(),
-                max_tokens: 4096,
-                temperature: 0.7,
-                max_iterations: 15,
-                working_directory: String::new(),
-                session_id: None,
-                system_prompt: String::new(),
-            }
+        AnthropicChatContext {
+            model: "claude-sonnet-4-6".to_string(),
+            max_tokens: 4096,
+            temperature: 0.7,
+            max_iterations: 15,
+            working_directory: String::new(),
+            session_id: None,
+            system_prompt: String::new(),
         }
     }
 

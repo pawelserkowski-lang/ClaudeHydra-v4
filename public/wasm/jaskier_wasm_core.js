@@ -1,6 +1,57 @@
 /* @ts-self-types="./jaskier_wasm_core.d.ts" */
 
 /**
+ * Compute comprehensive text statistics.
+ * Returns JSON: `{ chars, chars_no_spaces, words, sentences, paragraphs, lines, avg_word_length, unique_words, estimated_reading_time_secs }`
+ * @param {string} input
+ * @returns {string}
+ */
+export function analyzeText(input) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(input, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.analyzeText(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred2_0 = r0;
+        deferred2_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Compare a query against multiple candidates, returning similarity scores.
+ * Input: JSON `{ "query": "...", "candidates": ["...", "..."] }`
+ * Output: JSON array of `{ index, cosine, jaccard, combined }` sorted by combined score desc.
+ * @param {string} input_json
+ * @returns {string}
+ */
+export function batchSimilarity(input_json) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(input_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.batchSimilarity(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred2_0 = r0;
+        deferred2_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Simple performance benchmark — mask PII in a string N times, return elapsed ms.
  * @param {string} input
  * @param {number} iterations
@@ -10,6 +61,54 @@ export function benchmarkPiiMasking(input, iterations) {
     const ptr0 = passStringToWasm0(input, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.benchmarkPiiMasking(ptr0, len0, iterations);
+    return ret;
+}
+
+/**
+ * Benchmark text similarity — compute cosine similarity N times, return elapsed ms.
+ * @param {string} a
+ * @param {string} b
+ * @param {number} iterations
+ * @returns {number}
+ */
+export function benchmarkSimilarity(a, b, iterations) {
+    const ptr0 = passStringToWasm0(a, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(b, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.benchmarkSimilarity(ptr0, len0, ptr1, len1, iterations);
+    return ret;
+}
+
+/**
+ * Cosine similarity between two texts using character trigrams.
+ * Returns a value in [0.0, 1.0] where 1.0 = identical.
+ * @param {string} a
+ * @param {string} b
+ * @returns {number}
+ */
+export function cosineSimilarity(a, b) {
+    const ptr0 = passStringToWasm0(a, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(b, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.cosineSimilarity(ptr0, len0, ptr1, len1);
+    return ret;
+}
+
+/**
+ * Cosine similarity using character n-grams of configurable size.
+ * @param {string} a
+ * @param {string} b
+ * @param {number} n
+ * @returns {number}
+ */
+export function cosineSimilarityNgram(a, b, n) {
+    const ptr0 = passStringToWasm0(a, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(b, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.cosineSimilarityNgram(ptr0, len0, ptr1, len1, n);
     return ret;
 }
 
@@ -50,6 +149,62 @@ export function countTokensBatch(inputs_json) {
 }
 
 /**
+ * Extract keywords from text, filtering stop words (EN+PL) and short words.
+ * Returns JSON array of keyword strings sorted by frequency.
+ * @param {string} input
+ * @param {number} min_word_length
+ * @returns {string}
+ */
+export function extractKeywords(input, min_word_length) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(input, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.extractKeywords(retptr, ptr0, len0, min_word_length);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred2_0 = r0;
+        deferred2_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Fuzzy search a query against a JSON array of candidate strings.
+ * Returns JSON array of `{ text, score, index }` sorted by score descending.
+ * Only matches with score >= min_score are returned.
+ * @param {string} query
+ * @param {string} candidates_json
+ * @param {number} min_score
+ * @returns {string}
+ */
+export function fuzzySearch(query, candidates_json, min_score) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(query, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(candidates_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.fuzzySearch(retptr, ptr0, len0, ptr1, len1, min_score);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred3_0 = r0;
+        deferred3_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Get the version of the WASM module.
  * @returns {string}
  */
@@ -71,10 +226,82 @@ export function getVersion() {
 }
 
 /**
+ * Fast FNV-1a 64-bit hash of text. Returns 16-char hex string.
+ * Useful for client-side deduplication.
+ * @param {string} input
+ * @returns {string}
+ */
+export function hashText(input) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(input, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.hashText(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred2_0 = r0;
+        deferred2_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Initialize panic hook for better error messages in browser console.
  */
 export function init() {
     wasm.init();
+}
+
+/**
+ * Jaccard similarity between word sets of two texts.
+ * Returns a value in [0.0, 1.0].
+ * @param {string} a
+ * @param {string} b
+ * @returns {number}
+ */
+export function jaccardSimilarity(a, b) {
+    const ptr0 = passStringToWasm0(a, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(b, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.jaccardSimilarity(ptr0, len0, ptr1, len1);
+    return ret;
+}
+
+/**
+ * Levenshtein edit distance between two strings.
+ * @param {string} a
+ * @param {string} b
+ * @returns {number}
+ */
+export function levenshteinDistance(a, b) {
+    const ptr0 = passStringToWasm0(a, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(b, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.levenshteinDistance(ptr0, len0, ptr1, len1);
+    return ret >>> 0;
+}
+
+/**
+ * Normalized Levenshtein similarity in [0.0, 1.0].
+ * 1.0 = identical, 0.0 = completely different.
+ * @param {string} a
+ * @param {string} b
+ * @returns {number}
+ */
+export function levenshteinSimilarity(a, b) {
+    const ptr0 = passStringToWasm0(a, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(b, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.levenshteinSimilarity(ptr0, len0, ptr1, len1);
+    return ret;
 }
 
 /**
@@ -235,6 +462,57 @@ export function maskPii(input) {
         const ptr0 = passStringToWasm0(input, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
         const len0 = WASM_VECTOR_LEN;
         wasm.maskPii(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred2_0 = r0;
+        deferred2_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Truncate text at word boundary, appending ellipsis if truncated.
+ * @param {string} input
+ * @param {number} max_chars
+ * @returns {string}
+ */
+export function smartTruncate(input, max_chars) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(input, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.smartTruncate(retptr, ptr0, len0, max_chars);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        deferred2_0 = r0;
+        deferred2_1 = r1;
+        return getStringFromWasm0(r0, r1);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Get top N most frequent words from text.
+ * Returns JSON array of `{ word, count, percentage }`.
+ * @param {string} input
+ * @param {number} top_n
+ * @returns {string}
+ */
+export function wordFrequency(input, top_n) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(input, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.wordFrequency(retptr, ptr0, len0, top_n);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         deferred2_0 = r0;
